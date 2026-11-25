@@ -54,7 +54,7 @@
             <span class="inline"><input type="number" id="mapSurface" step="0.1" placeholder="e.g. 1897"><select id="mapSurfaceUnit"><option value="m">m</option><option value="ft">ft</option></select></span>
           </label>
         </div>
-        <p class="hint">Enter the lake's surface elevation above sea level (Wikipedia lists it); leave it blank for the Great Lakes and their bays. NOAA's mosaic covers the Great Lakes and some other lakes — if yours comes back empty, use <b>Upload data</b>.</p>
+        <p class="hint"><b>Michigan inland lakes</b> load automatically from the DNR's lake contour maps — no elevation needed. Elsewhere, enter the lake's surface elevation (Wikipedia lists it), or leave it blank for the Great Lakes and their bays; those use NOAA's mosaic. If your lake comes back empty, use <b>Upload data</b>.</p>
         <button class="primary" id="mapLoad">Load lake from map view</button>
       </div>
 
@@ -117,6 +117,9 @@
       </div>
       <div class="row">
         <label><input type="checkbox" id="nice" checked> Round depths to tidy numbers</label>
+      </div>
+      <div class="row">
+        <button id="useContours" hidden>Cut along the lake map's contour depths</button>
       </div>
       <div class="row">
         <label>Custom depths <small>(optional, comma-separated, overrides the above)</small>
@@ -240,7 +243,8 @@
 
 <footer>
   Depth data: <a href="https://www.ncei.noaa.gov/products/great-lakes-bathymetry">NOAA NCEI Great Lakes Bathymetry</a>
-  via the NCEI <a href="https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_global_mosaic/ImageServer">DEM Global Mosaic</a>. Map © OpenStreetMap contributors.
+  via the NCEI <a href="https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_global_mosaic/ImageServer">DEM Global Mosaic</a>;
+  Michigan inland lakes: <a href="https://gis-midnr.opendata.arcgis.com/datasets/d49160d2e5af4123b15d48c2e9c70160">MDNR / IFR Inland Lake Contours</a>. Map © OpenStreetMap contributors.
   Not for navigation.
 </footer>
 
@@ -251,6 +255,7 @@
 <script src="vendor/leaflet/leaflet.js"></script>
 <script src="js/core.js"></script>
 <script src="js/data.js"></script>
+<script src="js/dnr.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

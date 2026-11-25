@@ -3,7 +3,7 @@
 A static web tool that turns lake bathymetry into stacked, laser-cuttable SVG sheets. When the sheets are cut from plywood, painted and stacked, they make a layered depth map for the wall.
 
 - **All five Great Lakes are built in.** One click downloads NOAA's Great Lakes bathymetry from NOAA NCEI's public DEM Global Mosaic image service.
-- **Pick on map** works for any lake the global terrain data has lake-floor depths for.
+- **Pick on map**: Michigan inland lakes load automatically from the Michigan DNR's lake contour maps, and the tool builds a smooth lake floor through every contour. Other lakes use NOAA's data where it exists.
 - **Upload data** covers every other lake. It accepts a GeoTIFF, an Esri ASCII grid (`.asc`), or a grayscale image.
 - **Output:** one SVG per sheet at real size (mm). Red lines are cuts and blue lines are scores. Each sheet gets alignment pin holes, a hidden sheet number and glue guides. The top sheet gets an engraved title in a single-stroke font, so there's no font conversion to do. You can download everything as a ZIP that also has a combined sheet and assembly notes.
 
@@ -40,7 +40,8 @@ You can also type your own depths into **Custom depths**.
 The map option also uses NOAA's [DEM Global Mosaic](https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_global_mosaic/ImageServer). It has the Great Lakes, stored as depth below each lake's chart datum, plus whatever other lakes NOAA has digitized. If your lake comes back empty, the tool says so. For those lakes, upload a depth raster instead:
 
 - **NOAA NCEI** has bathymetric DEMs for many U.S. lakes and coasts: <https://www.ncei.noaa.gov/maps/bathymetry/>
-- **State DNRs** publish lake-depth data. Minnesota DNR, for example, has lake bathymetric DEMs.
+- **Michigan inland lakes** are built in. Drop a marker on the lake in **Pick on map**. The data is MDNR / Institute for Fisheries Research *Inland Lake Contours*.
+- **Other state DNRs** publish lake-depth data. Minnesota DNR, for example, has lake bathymetric DEMs.
 - **USGS** has topobathymetric DEMs.
 - **No raster?** Trace a printed depth chart in any image editor. Fill each depth band with a flat gray (darker = deeper, white = land), upload the image, and enter the deepest depth.
 
@@ -52,14 +53,15 @@ For GeoTIFF or ASCII grids, tell the tool what the values mean: depth (positive 
 index.html        page layout
 css/style.css     styles
 js/core.js        geometry engine: lake isolation, smoothing, contours, SVG + engraving font
-js/data.js        terrain-tile fetcher and GeoTIFF / ASCII / image readers
+js/data.js        NOAA fetcher and GeoTIFF / ASCII / image readers
+js/dnr.js         Michigan DNR contour loader: lake lookup, contour fill, smooth floor
 js/app.js         UI, preview, downloads
 vendor/           d3-contour, d3-array, geotiff.js, JSZip, Leaflet
 ```
 
 ## Credits
 
-- Depth data: NOAA NCEI Great Lakes Bathymetry, served through the NCEI DEM Global Mosaic.
+- Depth data: NOAA NCEI Great Lakes Bathymetry, served through the NCEI DEM Global Mosaic. Michigan inland lakes: MDNR / IFR Inland Lake Contours (State of Michigan Open Data).
 - Map tiles: © OpenStreetMap contributors.
 - Libraries: d3-contour and d3-array (ISC), geotiff.js (MIT), JSZip (MIT/GPLv3), Leaflet (BSD-2).
 

@@ -177,6 +177,7 @@
 
   function setLake(lake) {
     state.lake = lake;
+    if (lake.source !== 'dnr') $('useContours').hidden = true;
     $('empty').hidden = true;
     $('title').placeholder = lake.name || '(lake name)';
     $('subtitle').placeholder = autoSubtitle();
@@ -205,15 +206,46 @@
     state.map = map;
   }
 
-  function loadFromMap() {
+  /** Michigan inland lakes: build the lake floor from the DNR contour maps. Returns true if handled. */
+  async function tryDNR(ll, bbox, typedName) {
+    if (!window.LakeDNR || !LakeDNR.inMichigan(ll.lng, ll.lat)) return false;
+    try {
+      status('Checking Michigan DNR lake maps…', 0.1);
+      const hit = await LakeDNR.findLakeAt(ll.lng, ll.lat, bbox);
+      if (!hit || !hit.inside) return false;
+      const target = parseInt($('resolution').value, 10);
+      const g = await LakeDNR.loadLake(hit.key, target, (m) => status(m, 0.5));
+      const lake = C.isolateLake(g.depth, g.w, g.h, { mode: 'all', minDepth: 0.001 });
+      if (!lake.waterPixels) return false;
+      lake.aspect = 1;
+      const name = typedName || (g.name ? g.name : 'Lake');
+      document.querySelectorAll('.lake-btn').forEach(x => x.classList.remove('active'));
+      state.dnrLevels = g.levelsFt.filter(d => d > 0);
+      setLake(Object.assign(lake, { name, knownMaxDepth: lake.maxDepth, source: 'dnr' }));
+      $('useContours').hidden = !state.dnrLevels.length;
+      status(`Built from ${state.dnrLevels.length + 1} Michigan DNR contours (0–${Math.max(0, ...state.dnrLevels)} ft).`, 1);
+      return true;
+    } catch (e) {
+      console.warn('DNR lookup failed, falling back to NOAA', e);
+      return false;
+    }
+  }
+
+  async function loadFromMap() {
     if (!state.map) return;
-    const name = $('mapName').value.trim() || 'Lake';
+    const typedName = $('mapName').value.trim();
+    const name = typedName || 'Lake';
     let surface = parseFloat($('mapSurface').value);
     if (Number.isFinite(surface) && $('mapSurfaceUnit').value === 'ft') surface *= C.M_PER_FT;
     if (!state.marker) { status('Tap inside the lake on the map to drop a marker first.', 0, true); return; }
     const b = state.map.getBounds();
     const bbox = [b.getWest(), Math.max(-85, b.getSouth()), b.getEast(), Math.min(85, b.getNorth())];
     const ll = state.marker.getLatLng();
+    if (state.busy) return;
+    state.busy = true;
+    let handled = false;
+    try { handled = await tryDNR(ll, bbox, typedName); } finally { state.busy = false; }
+    if (handled) return;
     document.querySelectorAll('.lake-btn').forEach(x => x.classList.remove('active'));
     loadFromTiles({ bbox, surfaces: Number.isFinite(surface) ? [surface, 0] : [0], seed: [ll.lng, ll.lat], name, strictSeed: true });
   }
@@ -572,6 +604,12 @@
     document.querySelectorAll('.lake-btn').forEach(b => b.addEventListener('click', () =>
       b.dataset.lake === 'demo' ? demoLake() : loadPreset(b.dataset.lake)));
     $('mapLoad').addEventListener('click', loadFromMap);
+    $('useContours').addEventListener('click', () => {
+      if (!state.dnrLevels) return;
+      $('depthUnit').value = 'ft';
+      $('customDepths').value = state.dnrLevels.join(', ');
+      scheduleRegen();
+    });
 
     // file input + drag/drop
     $('fileInput').addEventListener('change', (e) => e.target.files[0] && readFile(e.target.files[0]));
