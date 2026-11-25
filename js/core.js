@@ -125,8 +125,12 @@
     const mode = opts.mode || 'largest';
     if (mode === 'all') lake = water;
     else if (mode === 'seed' && opts.seed) {
-      const s = nearestWater(water, w, h, opts.seed[0], opts.seed[1], Math.round(Math.max(w, h) * 0.05));
-      lake = s >= 0 ? floodFill(water, w, h, s) : largestComponent(water, w, h);
+      // strictSeed: the marker must be (nearly) on water — never wander off to another lake
+      const r = opts.strictSeed ? 3 : Math.round(Math.max(w, h) * 0.05);
+      const s = nearestWater(water, w, h, opts.seed[0], opts.seed[1], r);
+      if (s >= 0) lake = floodFill(water, w, h, s);
+      else if (opts.strictSeed) lake = new Uint8Array(w * h);
+      else lake = largestComponent(water, w, h);
     } else lake = largestComponent(water, w, h);
 
     let x0 = w, y0 = h, x1 = -1, y1 = -1, n = 0, maxD = 0;

@@ -81,7 +81,7 @@
    * chart datum (surface 0) while most other places are height above sea level, so we
    * try each candidate and keep the one whose deepest point best matches what we expect.
    */
-  async function loadFromTiles({ bbox, surfaces, seed, exclude, name, knownMaxDepth }) {
+  async function loadFromTiles({ bbox, surfaces, seed, exclude, name, knownMaxDepth, strictSeed }) {
     if (state.busy) return;
     state.busy = true;
     try {
@@ -97,26 +97,35 @@
         if (sx >= 0 && sy >= 0 && sx < tile.w && sy < tile.h) seedElev = tile.elev[sy * tile.w + sx];
       }
       const excl = D.excludeMask(tile, exclude);
-      let best = null;
+      let best = null, sawFlat = false, sawHigh = false;
       for (const surface of surfaces) {
         if (!Number.isFinite(surface)) continue;
         const depth = new Float32Array(tile.w * tile.h);
         for (let i = 0; i < depth.length; i++) depth[i] = surface - tile.elev[i];
         const lake = C.isolateLake(depth, tile.w, tile.h, {
-          mode: seedPx ? 'seed' : 'largest', seed: seedPx, excludeMask: excl, minDepth: 0.3
+          mode: seedPx ? 'seed' : 'largest', seed: seedPx, strictSeed: !!strictSeed, excludeMask: excl, minDepth: 0.3
         });
-        if (!lake.waterPixels || lake.maxDepth < 1) continue;
-        // robust max (99.9th percentile) so a single bad pixel can't throw off the check
+        if (!lake.waterPixels) continue;
+        if (strictSeed && lake.waterPixels > 0.85 * tile.w * tile.h) { sawHigh = true; continue; } // surface too high: land floods
         const vals = [];
         for (let i = 0; i < lake.depth.length; i++) if (lake.depth[i] > 0) vals.push(lake.depth[i]);
         vals.sort((a, b) => a - b);
-        const p999 = vals[Math.floor(vals.length * 0.999)] || lake.maxDepth;
-        const score = knownMaxDepth ? Math.abs(Math.log(p999 / knownMaxDepth)) : -lake.waterPixels;
+        const pct = (q) => vals[Math.min(vals.length - 1, Math.floor(vals.length * q))];
+        // A lake with only a water surface (no bathymetry) comes back nearly flat.
+        if (pct(0.95) - pct(0.05) < 1 || lake.maxDepth < 1) { sawFlat = true; continue; }
+        const p999 = pct(0.999) || lake.maxDepth; // robust max: one bad pixel can't skew it
+        if (!knownMaxDepth) { best = { lake, p999 }; break; } // first valid surface wins (the user's)
+        const score = Math.abs(Math.log(p999 / knownMaxDepth));
         if (!best || score < best.score) best = { lake, score, p999 };
       }
       if (!best) {
-        const at = seedElev != null && Number.isFinite(seedElev) ? ` NOAA's value at your marker is ${Math.round(seedElev)} m.` : '';
-        status(`No lake-floor depths found here.${at} Check the surface elevation, or use Upload data — NOAA's mosaic doesn't have every lake.`, 0, true);
+        const v = seedElev != null && Number.isFinite(seedElev) ? Math.round(seedElev * 10) / 10 : null;
+        const at = v != null ? ` (NOAA reads ${v} m at your marker${sawFlat ? ' — just the water surface' : ''})` : '';
+        status(sawHigh && !sawFlat
+          ? `That surface elevation floods the land around the lake — check the number and the m/ft setting.`
+          : sawFlat
+          ? `NOAA has this lake's surface but not its depths${at}. Use Upload data with a depth map from your state DNR, or trace a depth chart as a grayscale image.`
+          : `No lake-floor depths at your marker${at}. Make sure the marker is on the water and the surface elevation is right — or use Upload data.`, 0, true);
         return;
       }
       const lake = best.lake;
@@ -206,7 +215,7 @@
     const bbox = [b.getWest(), Math.max(-85, b.getSouth()), b.getEast(), Math.min(85, b.getNorth())];
     const ll = state.marker.getLatLng();
     document.querySelectorAll('.lake-btn').forEach(x => x.classList.remove('active'));
-    loadFromTiles({ bbox, surfaces: Number.isFinite(surface) ? [surface, 0] : [0], seed: [ll.lng, ll.lat], name });
+    loadFromTiles({ bbox, surfaces: Number.isFinite(surface) ? [surface, 0] : [0], seed: [ll.lng, ll.lat], name, strictSeed: true });
   }
 
   // ------------------------------------------------------------------ file tab
