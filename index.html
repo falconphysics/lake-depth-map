@@ -6,7 +6,7 @@
 <title>Lake Depth Map Maker — layered laser-cut bathymetry</title>
 <meta name="description" content="Generate stacked, laser-cuttable SVG layers of lake depth maps — all five Great Lakes or any lake with depth data.">
 <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
-<link rel="stylesheet" href="css/style.css?v=10">
+<link rel="stylesheet" href="css/style.css?v=11">
 </head>
 <body>
 <header class="masthead">
@@ -188,7 +188,21 @@
           <input type="range" id="townDetail" min="0" max="3" value="0" step="1">
         </label>
       </div>
-      <p class="hint">Scored onto the land around the lake, for the Great Lakes region. Around Michigan's inland lakes you get the state's detailed roads, down to local streets.</p>
+      <div class="row">
+        <label>Map reach from shore <output id="mapReachOut"></output>
+          <input type="range" id="mapReach" min="1" max="8" value="4" step="1">
+        </label>
+      </div>
+      <div class="row">
+        <label>Map style
+          <select id="mapStyle">
+            <option value="raster">Raster engrave (image layer)</option>
+            <option value="score">Score lines (vector)</option>
+          </select>
+        </label>
+      </div>
+      <p class="hint">For the Great Lakes region; around Michigan's inland lakes you get the state's detailed roads, down to local streets. Raster style embeds a 254 DPI image in the top sheet: heavier lines for bigger roads, and labels in a real typeface. Set that layer to engrave in your laser software.</p>
+
       <div class="row">
         <label><input type="checkbox" id="labels" checked> Number each sheet (hidden under the layer above)</label>
       </div>
@@ -241,7 +255,7 @@
     <details class="howto">
       <summary>Cutting &amp; assembly tips</summary>
       <ol>
-        <li><b>Red lines cut, blue lines score.</b> Each SVG is drawn at real size in millimeters — import at 100% scale.</li>
+        <li><b>Red lines cut, blue lines score.</b> The roads-and-towns image on the top sheet is a raster engrave layer. Each SVG is drawn at real size in millimeters — import at 100% scale.</li>
         <li><b>Sheet 1 is the top</b> (the shoreline and frame). Each next sheet opens up the deeper water. The backing sheet closes the bottom.</li>
         <li><b>Loose pieces are islands and shoals.</b> When a sheet's cut frees an island, glue it onto the next sheet down — the blue score guide shows where it goes.</li>
         <li><b>Paint or stain before gluing.</b> The legend colors make a good shallow-to-deep gradient. Seal plywood edges if you paint them.</li>
@@ -264,9 +278,9 @@
 <script src="vendor/jszip.min.js"></script>
 <script src="vendor/geotiff.js"></script>
 <script src="vendor/leaflet/leaflet.js"></script>
-<script src="js/core.js?v=10"></script>
-<script src="js/data.js?v=10"></script>
-<script src="js/dnr.js?v=10"></script>
-<script src="js/app.js?v=10"></script>
+<script src="js/core.js?v=11"></script>
+<script src="js/data.js?v=11"></script>
+<script src="js/dnr.js?v=11"></script>
+<script src="js/app.js?v=11"></script>
 </body>
 </html>

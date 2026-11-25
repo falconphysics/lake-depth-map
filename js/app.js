@@ -11,7 +11,7 @@
   // ------------------------------------------------------------------ settings
   const SETTING_IDS = ['nLayers', 'spacing', 'depthUnit', 'nice', 'customDepths', 'backing', 'units', 'shape',
     'width', 'height', 'margin', 'radius', 'thickness', 'holeDia', 'resolution', 'smooth', 'minPiece',
-    'useTitle', 'useSubtitle', 'labels', 'guides', 'cutColor', 'scoreColor', 'strokeWidth', 'palette', 'roadDetail', 'townDetail'];
+    'useTitle', 'useSubtitle', 'labels', 'guides', 'cutColor', 'scoreColor', 'strokeWidth', 'palette', 'roadDetail', 'townDetail', 'mapReach', 'mapStyle'];
 
   function saveSettings() {
     const o = {};
@@ -202,6 +202,49 @@
     const padX = (b[0] - a[0]) * 0.05, padY = (a[1] - b[1]) * 0.05;
     return [a[0] - padX, b[1] - padY, b[0] + padX, a[1] + padY];
   }
+  // Map reach slider: distance from the shoreline on the finished board (mm)
+  const REACH_MM = [0, 5, 10, 15, 20, 30, 45, 70, Infinity];
+  const MAP_FONT = '"Avenir Next", "Helvetica Neue", Helvetica, Arial, sans-serif';
+  const PX_PER_MM = 10; // 254 DPI
+  const measureCtx = document.createElement('canvas').getContext('2d');
+  function measureLabel(text, size) {
+    measureCtx.font = `600 ${size * 10}px ${MAP_FONT}`;
+    return measureCtx.measureText(text).width / 10;
+  }
+  /** Draw roads (weighted by class), town dots and labels into a transparent black image. */
+  function rasterizeMap(f, L) {
+    const ppm = Math.min(PX_PER_MM, 8000 / Math.max(L.W, L.H));
+    const c = document.createElement('canvas');
+    c.width = Math.round(L.W * ppm); c.height = Math.round(L.H * ppm);
+    const ctx = c.getContext('2d');
+    ctx.scale(ppm, ppm);
+    ctx.strokeStyle = ctx.fillStyle = '#000';
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    const k = Math.max(0.6, Math.min(2, L.W / 305));
+    const widths = [0, 1.0, 0.75, 0.5, 0.28].map(w => Math.max(0.2, w * k)); // mm, by road class
+    for (const r of f.roads) {
+      ctx.lineWidth = widths[r.cls] || 0.3;
+      ctx.beginPath();
+      r.pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+      ctx.stroke();
+    }
+    for (const d of f.dots) { ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2); ctx.fill(); }
+    ctx.textBaseline = 'top';
+    for (const l of f.labels) {
+      // draw at 10x and scale down so small text is crisp on every browser
+      ctx.save(); ctx.translate(l.x, l.y); ctx.scale(0.1, 0.1);
+      ctx.font = `600 ${l.size * 10}px ${MAP_FONT}`;
+      // knock-out halo: clear roads just around the letters, like a printed map
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.lineWidth = l.size * 10 * 0.28;
+      ctx.strokeText(l.text, 0, 0);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillText(l.text, 0, 0);
+      ctx.restore();
+    }
+    return c;
+  }
+
   const MI_BOX = [-90.5, 41.6, -82.1, 48.4];
   const MI_MAX_AREA = 2.5; // sq. degrees: above this the panel is too big for local road tiles
   const boxHit = (b, n) => b[2] >= n[0] && b[0] <= n[2] && b[3] >= n[1] && b[1] <= n[3];
@@ -213,8 +256,8 @@
     return inside;
   }
 
-  /** Map path for the top sheet, or null while data loads (it re-renders when ready). */
-  function mapPathFor(result, o, roads, towns) {
+  /** Map features for the top sheet, or null while data loads (it re-renders when ready). */
+  function mapFeaturesFor(result, o, roads, towns, reach) {
     const lake = state.lake;
     state.mapNote = '';
     if ((!roads && !towns) || !lake.geo) return null;
@@ -301,7 +344,7 @@
       };
       state.mapGridKey = key;
     }
-    return C.mapOverlay(result, state.mapGrid, { roads, towns, holeDia: o.holeDia, title: o.title, subtitle: o.subtitle });
+    return C.mapFeatures(result, state.mapGrid, { roads, towns, reach, measure: measureLabel, holeDia: o.holeDia, title: o.title, subtitle: o.subtitle });
   }
 
   let lakeCounter = 0;
@@ -472,6 +515,8 @@
     $('smoothOut').textContent = $('smooth').value;
     $('roadDetailOut').textContent = ROAD_NAMES[parseInt($('roadDetail').value, 10)];
     $('townDetailOut').textContent = TOWN_NAMES[parseInt($('townDetail').value, 10)];
+    const reach = REACH_MM[parseInt($('mapReach').value, 10)];
+    $('mapReachOut').textContent = Number.isFinite(reach) ? fmtLen(reach).replace('"', ' in') : 'whole frame';
     const mp = parseFloat($('minPiece').value);
     $('minPieceOut').textContent = mp ? fmtLen(mp).replace('"', ' in') : 'off';
     $('subtitle').placeholder = autoSubtitle();
@@ -488,7 +533,16 @@
     });
     state.opts = o;
     state.settings = s;
-    o.mapPath = mapPathFor(state.result, o, parseInt($('roadDetail').value, 10), parseInt($('townDetail').value, 10));
+    const feats = mapFeaturesFor(state.result, o, parseInt($('roadDetail').value, 10), parseInt($('townDetail').value, 10),
+      REACH_MM[parseInt($('mapReach').value, 10)]);
+    state.mapCanvas = null;
+    if (feats && (feats.roads.length || feats.dots.length)) {
+      if ($('mapStyle').value === 'score') o.mapPath = C.mapFeaturesPath(feats);
+      else {
+        state.mapCanvas = rasterizeMap(feats, state.result.layout);
+        o.mapImage = state.mapCanvas.toDataURL('image/png');
+      }
+    }
     render();
   }
 
@@ -603,6 +657,17 @@
       ctx.lineCap = 'round'; ctx.lineJoin = 'round';
       ctx.stroke(new Path2D(m[1]));
     }
+    if (state.mapCanvas) {
+      // tint the black engraving image to look burned into the wood
+      const t = document.createElement('canvas');
+      t.width = state.mapCanvas.width; t.height = state.mapCanvas.height;
+      const tc = t.getContext('2d');
+      tc.drawImage(state.mapCanvas, 0, 0);
+      tc.globalCompositeOperation = 'source-in';
+      tc.fillStyle = s.palette === 'mono' ? '#555' : 'rgb(80, 45, 18)';
+      tc.fillRect(0, 0, t.width, t.height);
+      ctx.save(); ctx.globalAlpha = 0.85; ctx.drawImage(t, 0, 0, L.W, L.H); ctx.restore();
+    }
     const mm = svg.match(/<g id="map"[^>]*>\s*<path d="([^"]*)"/);
     if (mm) {
       ctx.strokeStyle = s.palette === 'mono' ? '#666' : 'rgba(70, 40, 15, 0.65)';
@@ -700,7 +765,7 @@
       `Sheets: ${n}   Material: ${fmtLen(s.thickness)}   Stack height: ${fmtLen(n * s.thickness)}`,
       `Deepest point in data: ${C.formatDepth(state.lake.maxDepth, s.unit).toLowerCase()}`,
       '',
-      'Colors: RED (' + s.cutColor + ') = cut through.  BLUE (' + s.scoreColor + ') = score / light engrave.',
+      'Colors: RED (' + s.cutColor + ') = cut through.  BLUE (' + s.scoreColor + ') = score / light engrave.  Embedded image on sheet 1 = raster engrave (roads and towns).',
       'SVGs are real size in millimeters. Import at 100% scale.',
       '',
       'Stack order (top to bottom):'
@@ -780,7 +845,7 @@
 
     const live = ['nLayers', 'spacing', 'depthUnit', 'nice', 'customDepths', 'backing', 'shape', 'width', 'height',
       'margin', 'radius', 'thickness', 'holeDia', 'smooth', 'minPiece', 'useTitle', 'useSubtitle', 'title', 'subtitle',
-      'labels', 'guides', 'cutColor', 'scoreColor', 'strokeWidth', 'palette', 'roadDetail', 'townDetail'];
+      'labels', 'guides', 'cutColor', 'scoreColor', 'strokeWidth', 'palette', 'roadDetail', 'townDetail', 'mapReach', 'mapStyle'];
     for (const id of live) {
       $(id).addEventListener('input', scheduleRegen);
       $(id).addEventListener('change', scheduleRegen);

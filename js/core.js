@@ -565,40 +565,93 @@
     return [t.cx - w / 2, t.cy - sz / 2, t.cx + w / 2, t.cy + sz / 2];
   }
 
+  // ---- distance transform (Felzenszwalb & Huttenlocher): distance to nearest set cell
+  function edt1d(f, n, d, v, z) {
+    let k = 0; v[0] = 0; z[0] = -Infinity; z[1] = Infinity;
+    for (let q = 1; q < n; q++) {
+      let s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+      while (s <= z[k]) { k--; s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]); }
+      k++; v[k] = q; z[k] = s; z[k + 1] = Infinity;
+    }
+    k = 0;
+    for (let q = 0; q < n; q++) { while (z[k + 1] < q) k++; d[q] = (q - v[k]) * (q - v[k]) + f[v[k]]; }
+  }
+  function distanceTo(set, w, h) {
+    const INF = 1e20, n = Math.max(w, h);
+    const g = new Float64Array(w * h);
+    for (let i = 0; i < w * h; i++) g[i] = set[i] ? 0 : INF;
+    const f = new Float64Array(n), d = new Float64Array(n), v = new Int32Array(n), z = new Float64Array(n + 1);
+    for (let x = 0; x < w; x++) {
+      for (let y = 0; y < h; y++) f[y] = g[y * w + x];
+      edt1d(f, h, d, v, z);
+      for (let y = 0; y < h; y++) g[y * w + x] = d[y];
+    }
+    const out = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) f[x] = g[y * w + x];
+      edt1d(f, w, d, v, z);
+      for (let x = 0; x < w; x++) out[y * w + x] = Math.sqrt(d[x]);
+    }
+    return out;
+  }
+
+  /** Default label width in mm (single-stroke font); the browser passes a real-font measurer. */
+  const strokeMeasure = (text, size) => textWidth(text, size);
+
   /**
-   * Roads and towns engraved on the top sheet's land.
-   * feats: { roads: [{cls, pts:[[gx,gy],...]}], places: [{cls, name, gx, gy}] } in grid pixels
-   *   (cls 1 = most important). Returns an SVG path string (mm).
+   * Roads and towns for the top sheet's land, in millimetres.
+   * feats: { roads: [{cls, pts:[[gx,gy],...]}], places: [{cls, name, pop, gx, gy}] } in grid pixels.
+   * o: { roads: 0-4, towns: 0-3, reach: mm from the shoreline (Infinity = whole frame),
+   *      measure(text, size) → width mm, holeDia, title, subtitle }
+   * Returns { roads: [{cls, pts:[[x,y],...]}], dots: [{x, y, r, cls}], labels: [{text, x, y, size, cls}] }
+   *   (label x, y = top-left of the text box; size = font size in mm).
    */
-  function mapOverlay(result, feats, o) {
+  function mapFeatures(result, feats, o) {
     const L = result.layout, g = result.grid;
     const roadMax = o.roads || 0;   // 1 freeways … 4 local roads
+    const placeMax = o.towns || 0;  // 1 cities, 2 towns, 3 villages
+    const measure = o.measure || strokeMeasure;
     const sx = L.aspect * L.scale, sy = L.scale;
     const toMM = (gx, gy) => [L.ox + gx * sx, L.oy + gy * sy];
     const edge = Math.max(1.5, L.margin * 0.12);
     const holes = registrationHoles(L, o.holeDia || 0);
     const holeR = Math.max(3, (o.holeDia || 0) * 1.6);
     const blocked = titleItems(result, o).map(t => { const b = textBox(t), p = Math.max(2, t.size * 0.5); return [b[0] - p * 1.5, b[1] - p, b[2] + p * 1.5, b[3] + p]; });
+    const waterAt = (gx, gy) => gx >= 0 && gy >= 0 && gx < g.w && gy < g.h && g.depth[gy * g.w + gx] >= 0;
     const water = (x, y) => {
       const gx = Math.floor((x - L.ox) / sx), gy = Math.floor((y - L.oy) / sy);
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-        const X = gx + dx, Y = gy + dy;
-        if (X >= 0 && Y >= 0 && X < g.w && Y < g.h && g.depth[Y * g.w + X] >= 0) return true;
-      }
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (waterAt(gx + dx, gy + dy)) return true;
       return false;
     };
+    // distance to the shoreline on a 1 mm raster of the panel
+    let near = () => true;
+    if (Number.isFinite(o.reach)) {
+      const R = 2; // cells per mm
+      const dw = Math.ceil(L.W * R), dh = Math.ceil(L.H * R);
+      const wet = new Uint8Array(dw * dh);
+      for (let y = 0; y < dh; y++) for (let x = 0; x < dw; x++) {
+        const gx = Math.floor(((x + 0.5) / R - L.ox) / sx), gy = Math.floor(((y + 0.5) / R - L.oy) / sy);
+        if (waterAt(gx, gy)) wet[y * dw + x] = 1;
+      }
+      const dist = distanceTo(wet, dw, dh);
+      const lim = o.reach * R;
+      near = (x, y) => {
+        const cx = Math.min(dw - 1, Math.max(0, Math.floor(x * R))), cy = Math.min(dh - 1, Math.max(0, Math.floor(y * R)));
+        return dist[cy * dw + cx] <= lim;
+      };
+    }
     const onPanel = (x, y) => {
       if (L.shape === 'circle') { const r = L.W / 2; return Math.hypot(x - r, y - r) < r - edge; }
       return x > edge && y > edge && x < L.W - edge && y < L.H - edge;
     };
     const ok = (x, y) => {
-      if (!onPanel(x, y) || water(x, y)) return false;
+      if (!onPanel(x, y) || !near(x, y) || water(x, y)) return false;
       for (const h of holes) if (Math.hypot(x - h[0], y - h[1]) < holeR) return false;
       for (const b of blocked) if (x > b[0] && x < b[2] && y > b[1] && y < b[3]) return false;
       return true;
     };
-    let d = '';
-    // roads: densify, keep the runs that stay on land, simplify
+    const out = { roads: [], dots: [], labels: [] };
+    // roads: densify, keep the runs that stay on land within reach, simplify
     for (const r of feats.roads || []) {
       if (r.cls > roadMax) continue;
       let run = [];
@@ -606,10 +659,7 @@
         if (run.length > 1) {
           let len = 0;
           for (let i = 1; i < run.length; i++) len += Math.hypot(run[i][0] - run[i - 1][0], run[i][1] - run[i - 1][1]);
-          if (len > 1.5) {
-            const simp = dpOpen(run, 0.12 * 0.12);
-            d += 'M' + simp.map(p => fmt(p[0]) + ' ' + fmt(p[1])).join('L');
-          }
+          if (len > 1) out.roads.push({ cls: r.cls, pts: dpOpen(run, 0.08 * 0.08) });
         }
         run = [];
       };
@@ -624,8 +674,9 @@
       }
       flush();
     }
+    out.roads.sort((a, b) => b.cls - a.cls); // draw local roads first, freeways on top
     // places: dot + label, most important first, no collisions
-    const base = Math.max(2.2, Math.min(4.5, L.W * 0.011));
+    const base = Math.max(2.4, Math.min(5, L.W * 0.012));
     const placed = [];
     const free = (b) => {
       for (const p of placed) if (b[0] < p[2] && b[2] > p[0] && b[1] < p[3] && b[3] > p[1]) return false;
@@ -634,29 +685,38 @@
       }
       return true;
     };
-    const placeMax = o.towns || 0;  // 1 cities, 2 towns, 3 villages
     const places = (feats.places || []).filter(p => p.cls <= placeMax)
       .sort((a, b) => a.cls - b.cls || (b.pop || 0) - (a.pop || 0));
     for (const p of places) {
       const [x, y] = toMM(p.gx, p.gy);
-      const rDot = p.cls === 1 ? 0.75 : 0.5;
+      const rDot = p.cls === 1 ? 0.9 : p.cls === 2 ? 0.65 : 0.45;
       const dotBox = [x - rDot - 0.4, y - rDot - 0.4, x + rDot + 0.4, y + rDot + 0.4];
       if (!free(dotBox)) continue;
-      const size = base * (p.cls === 1 ? 1 : p.cls === 2 ? 0.82 : 0.68);
-      const name = String(p.name).normalize('NFD').replace(/[̀-ͯ]/g, '');
-      const tw = textWidth(name, size), gap = rDot + size * 0.35;
+      const size = base * (p.cls === 1 ? 1 : p.cls === 2 ? 0.85 : 0.72);
+      const name = String(p.name);
+      const tw = measure(name, size), gap = rDot + size * 0.3;
       const tries = [
         [x + gap, y - size / 2], [x - gap - tw, y - size / 2],
         [x - tw / 2, y - gap - size], [x - tw / 2, y + gap]
       ];
       for (const [tx, ty] of tries) {
-        const box = [tx - 0.4, ty - 0.4, tx + tw + 0.4, ty + size + 0.4];
+        const box = [tx - 0.4, ty - 0.3, tx + tw + 0.4, ty + size + 0.3];
         if (!free(box)) continue;
         placed.push(dotBox, box);
-        d += circlePath([x, y], rDot) + textPath(name, tx, ty, size);
+        out.dots.push({ x, y, r: rDot, cls: p.cls });
+        out.labels.push({ text: name, x: tx, y: ty, size, cls: p.cls });
         break;
       }
     }
+    return out;
+  }
+
+  /** Vector fallback (single-stroke) for the map features, as one SVG path string. */
+  function mapFeaturesPath(f) {
+    let d = '';
+    for (const r of f.roads) d += 'M' + r.pts.map(p => fmt(p[0]) + ' ' + fmt(p[1])).join('L');
+    for (const p of f.dots) d += circlePath([p.x, p.y], p.r);
+    for (const l of f.labels) d += textPath(String(l.text).normalize('NFD').replace(/[̀-ͯ]/g, ''), l.x, l.y + l.size * 0.15, l.size * 0.7);
     return d;
   }
 
@@ -687,9 +747,10 @@
     const sw = o.strokeWidth || 0.1;
     const name = isBacking ? 'Backing' : `Layer ${k + 1}`;
     return `<?xml version="1.0" encoding="UTF-8"?>\n` +
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(L.W)}mm" height="${fmt(L.H)}mm" viewBox="0 0 ${fmt(L.W)} ${fmt(L.H)}">\n` +
+      `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${fmt(L.W)}mm" height="${fmt(L.H)}mm" viewBox="0 0 ${fmt(L.W)} ${fmt(L.H)}">\n` +
       `<title>${esc(o.lakeName || 'Lake')} — ${name}</title>\n` +
       `<g id="cut" fill="none" stroke="${o.cutColor || '#FF0000'}" stroke-width="${sw}">\n<path fill-rule="evenodd" d="${cut.join('')}"/>\n</g>\n` +
+      (k === 0 && o.mapImage ? `<g id="map-engrave">\n<image x="0" y="0" width="${fmt(L.W)}" height="${fmt(L.H)}" preserveAspectRatio="none" href="${o.mapImage}" xlink:href="${o.mapImage}"/>\n</g>\n` : '') +
       (k === 0 && o.mapPath ? `<g id="map" fill="none" stroke="${o.scoreColor || '#0000FF'}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">\n<path d="${o.mapPath}"/>\n</g>\n` : '') +
       (score.length ? `<g id="score" fill="none" stroke="${o.scoreColor || '#0000FF'}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">\n<path d="${score.join('')}"/>\n</g>\n` : '') +
       `</svg>\n`;
@@ -709,12 +770,12 @@
       const x = (k % cols) * (L.W + gap), y = Math.floor(k / cols) * (L.H + gap);
       body += `<g id="sheet-${k + 1}" transform="translate(${fmt(x)} ${fmt(y)})">\n${inner}</g>\n`;
     }
-    return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(TW)}mm" height="${fmt(TH)}mm" viewBox="0 0 ${fmt(TW)} ${fmt(TH)}">\n${body}</svg>\n`;
+    return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${fmt(TW)}mm" height="${fmt(TH)}mm" viewBox="0 0 ${fmt(TW)} ${fmt(TH)}">\n${body}</svg>\n`;
   }
 
   return {
     M_PER_FT, PRESETS, floodFill, largestComponent, isolateLake, smoothLake, layerDepths,
-    buildLayers, panelLayout, layerSVG, mapOverlay, titleItems, combinedSVG, polygonsPath, panelOutlinePath,
+    buildLayers, panelLayout, layerSVG, mapFeatures, mapFeaturesPath, titleItems, combinedSVG, polygonsPath, panelOutlinePath,
     registrationHoles, ringArea, simplifyRing, chaikin, textPath, textWidth, formatDepth, GLYPHS
   };
 });
