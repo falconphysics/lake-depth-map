@@ -99,15 +99,20 @@
    * Fetch a float elevation grid for bbox [minLon,minLat,maxLon,maxLat] with square
    * (metre-wise) pixels. Returns the same shape as fetchElevation.
    */
+  const R_EARTH = 6378137;
+  const mercX = (lon) => R_EARTH * lon * Math.PI / 180;
+  const mercY = (lat) => R_EARTH * Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360));
+
   async function fetchNOAA(bbox, targetPx, onProgress, signal) {
     const [x0, y0, x1, y1] = bbox;
-    const latC = (y0 + y1) / 2, k = Math.cos(latC * Math.PI / 180);
-    const ratio = (y1 - y0) / ((x1 - x0) * k);           // height / width in metres
-    let w = ratio <= 1 ? targetPx : Math.round(targetPx / ratio);
-    let h = Math.round(w * ratio);
+    // Ask for Web Mercator output (square pixels, the familiar map shape) sized to the
+    // box's Mercator proportions so the server doesn't have to pad the extent.
+    const mw = mercX(x1) - mercX(x0), mh = mercY(y1) - mercY(y0);
+    let w = mw >= mh ? targetPx : Math.round(targetPx * mw / mh);
+    let h = Math.round(w * mh / mw);
     w = Math.max(16, Math.min(4000, w)); h = Math.max(16, Math.min(4000, h));
     const params = new URLSearchParams({
-      bbox: [x0, y0, x1, y1].join(','), bboxSR: '4326', imageSR: '4326', size: w + ',' + h,
+      bbox: [x0, y0, x1, y1].join(','), bboxSR: '4326', imageSR: '3857', size: w + ',' + h,
       format: 'tiff', pixelType: 'F32', noData: '-99999', interpolation: 'RSP_BilinearInterpolation', f: 'image'
     });
     onProgress && onProgress(0, 1);
@@ -124,6 +129,12 @@
     const tiff = await GeoTIFF.fromArrayBuffer(buf);
     const img = await tiff.getImage();
     const W = img.getWidth(), H = img.getHeight();
+    // The server may adjust the extent to keep pixels square: use the extent it actually returned.
+    let ex = [mercX(x0), mercY(y0), mercX(x1), mercY(y1)];
+    try {
+      const bb = img.getBoundingBox();
+      if (bb && bb.every(Number.isFinite) && Math.abs(bb[0]) > 360) ex = bb; // metres, not degrees
+    } catch (e) { /* not georeferenced: assume requested extent */ }
     const ras = await img.readRasters({ samples: [0], interleave: true });
     const elev = new Float32Array(W * H);
     for (let i = 0; i < W * H; i++) {
@@ -133,7 +144,7 @@
     onProgress && onProgress(1, 1);
     return {
       elev, w: W, h: H,
-      toPixel: (lon, lat) => [(lon - x0) / (x1 - x0) * W, (y1 - lat) / (y1 - y0) * H]
+      toPixel: (lon, lat) => [(mercX(lon) - ex[0]) / (ex[2] - ex[0]) * W, (ex[3] - mercY(lat)) / (ex[3] - ex[1]) * H]
     };
   }
 
