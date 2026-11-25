@@ -1,0 +1,44 @@
+name: Build Michigan roads
+
+# Downloads US Census TIGER/Line roads for every Michigan county and commits the
+# tiled data in data/mi-roads/ that the site uses for roads around inland lakes.
+# Runs when the build script changes, or by hand from the Actions tab.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - tools/build_michigan_roads.py
+      - .github/workflows/build-michigan-roads.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-michigan-roads
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pyshp
+      - name: Build tiles
+        run: python tools/build_michigan_roads.py --year 2024 --out data/mi-roads
+      - name: Commit data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/mi-roads
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "Update Michigan road tiles (TIGER/Line)"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi

@@ -572,7 +572,7 @@
    */
   function mapOverlay(result, feats, o) {
     const L = result.layout, g = result.grid;
-    const roadMax = Math.min(3, o.detail); // freeways / US highways / state highways
+    const roadMax = o.roads || 0;   // 1 freeways … 4 local roads
     const sx = L.aspect * L.scale, sy = L.scale;
     const toMM = (gx, gy) => [L.ox + gx * sx, L.oy + gy * sy];
     const edge = Math.max(1.5, L.margin * 0.12);
@@ -634,7 +634,7 @@
       }
       return true;
     };
-    const placeMax = [0, 1, 2, 2, 3][Math.max(0, Math.min(4, o.detail))]; // cities / towns / villages
+    const placeMax = o.towns || 0;  // 1 cities, 2 towns, 3 villages
     const places = (feats.places || []).filter(p => p.cls <= placeMax)
       .sort((a, b) => a.cls - b.cls || (b.pop || 0) - (a.pop || 0));
     for (const p of places) {

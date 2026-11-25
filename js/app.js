@@ -11,7 +11,7 @@
   // ------------------------------------------------------------------ settings
   const SETTING_IDS = ['nLayers', 'spacing', 'depthUnit', 'nice', 'customDepths', 'backing', 'units', 'shape',
     'width', 'height', 'margin', 'radius', 'thickness', 'holeDia', 'resolution', 'smooth', 'minPiece',
-    'useTitle', 'useSubtitle', 'labels', 'guides', 'cutColor', 'scoreColor', 'strokeWidth', 'palette', 'mapDetail'];
+    'useTitle', 'useSubtitle', 'labels', 'guides', 'cutColor', 'scoreColor', 'strokeWidth', 'palette', 'roadDetail', 'townDetail'];
 
   function saveSettings() {
     const o = {};
@@ -184,7 +184,8 @@
 
   // ------------------------------------------------------------------ map details (OpenStreetMap)
   const R_EARTH = 6378137;
-  const DETAIL_NAMES = ['Off', 'Cities + freeways', '+ towns + US highways', '+ state highways', '+ villages'];
+  const ROAD_NAMES = ['Off', 'Freeways', '+ US highways', '+ state & county highways', '+ local roads (Michigan)'];
+  const TOWN_NAMES = ['Off', 'Cities (50,000+)', '+ towns (5,000+)', '+ villages'];
   function lonLatToGrid(geo, lon, lat) {
     const mx = R_EARTH * lon * Math.PI / 180, my = R_EARTH * Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360));
     return [(mx - geo.mx0) / geo.mpp, (geo.my1 - my) / geo.mpp];
@@ -201,10 +202,22 @@
     const padX = (b[0] - a[0]) * 0.05, padY = (a[1] - b[1]) * 0.05;
     return [a[0] - padX, b[1] - padY, b[0] + padX, a[1] + padY];
   }
-  /** Map path for the top sheet from the bundled data, or null (and load it) if not ready. */
-  function mapPathFor(result, o, detail) {
+  const MI_BOX = [-90.5, 41.6, -82.1, 48.4];
+  const MI_MAX_AREA = 2.5; // sq. degrees: above this the panel is too big for local road tiles
+  const boxHit = (b, n) => b[2] >= n[0] && b[0] <= n[2] && b[3] >= n[1] && b[1] <= n[3];
+  function inRings(lon, lat, rings) {
+    let inside = false;
+    for (const r of rings) for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+      if ((r[i][1] > lat) !== (r[j][1] > lat) && lon < (r[j][0] - r[i][0]) * (lat - r[i][1]) / (r[j][1] - r[i][1]) + r[i][0]) inside = !inside;
+    }
+    return inside;
+  }
+
+  /** Map path for the top sheet, or null while data loads (it re-renders when ready). */
+  function mapPathFor(result, o, roads, towns) {
     const lake = state.lake;
-    if (!detail || !lake.geo) return null;
+    state.mapNote = '';
+    if ((!roads && !towns) || !lake.geo) return null;
     if (!state.mapData) {
       if (!state.mapDataLoading) {
         state.mapDataLoading = true;
@@ -217,18 +230,78 @@
     }
     const need = panelLonLatBox(result, lake.geo);
     const db = state.mapData.bbox;
-    state.mapOutside = need[2] < db[0] || need[0] > db[2] || need[3] < db[1] || need[1] > db[3];
-    const key = lake.id + ':' + need.map(v => v.toFixed(3)).join(',');
+    if (!boxHit(db, need)) { state.mapNote = 'Map details cover the Great Lakes region only.'; return null; }
+
+    // Detailed Michigan roads for smaller panels in Michigan
+    let miKeys = null;
+    const area = (need[2] - need[0]) * (need[3] - need[1]);
+    if (roads && boxHit(MI_BOX, need)) {
+      if (state.miIndex === undefined) {
+        D.loadMiIndex().then(ix => { state.miIndex = ix; regenerate(); });
+        state.miIndex = null; // loading
+        return null;
+      }
+      if (state.miIndex && area <= MI_MAX_AREA) {
+        const t = state.miIndex.tile, have = new Set(state.miIndex.tiles);
+        miKeys = [];
+        for (let ix = Math.floor(need[0] / t); ix <= Math.floor(need[2] / t); ix++)
+          for (let iy = Math.floor(need[1] / t); iy <= Math.floor(need[3] / t); iy++)
+            if (have.has(ix + '_' + iy)) miKeys.push(ix + '_' + iy);
+        const missing = miKeys.filter(k => !(state.miRoads && state.miRoads.has(k)));
+        if (missing.length) {
+          if (!state.miLoading) {
+            state.miLoading = true;
+            status('Loading Michigan roads…', 0.5);
+            Promise.all(missing.map(k => D.loadMiTile(k, state.miIndex.scale).then(lines => [k, lines])))
+              .then(list => {
+                state.miRoads = state.miRoads || new Map();
+                for (const [k, lines] of list) state.miRoads.set(k, lines);
+                status(''); regenerate();
+              })
+              .catch(e => { console.error(e); status('Could not load Michigan road tiles (' + (e.message || e) + ').', 0, true); })
+              .finally(() => { state.miLoading = false; });
+          }
+          return null;
+        }
+      } else if (roads >= 4) {
+        state.mapNote = state.miIndex ? 'Local roads appear for Michigan lakes up to about 100 miles across.' : 'Michigan local roads aren\u2019t built yet — run the “Build Michigan roads” action in the GitHub repo.';
+      }
+    } else if (roads >= 4) {
+      state.mapNote = 'Local roads are available around Michigan lakes only.';
+    }
+
+    const key = [lake.id, need.map(v => v.toFixed(3)).join(','), miKeys ? miKeys.join(',') : '-'].join('|');
     if (state.mapGridKey !== key) {
-      const hit = (b) => b[2] >= need[0] && b[0] <= need[2] && b[3] >= need[1] && b[1] <= need[3];
+      const mi = miKeys ? state.mapData.michigan : null;
+      const toG = (p) => lonLatToGrid(lake.geo, p[0], p[1]);
+      const out = [];
+      for (const r of state.mapData.roads) {
+        if (!boxHit(r.bb, need)) continue;
+        if (!mi) { out.push({ cls: r.cls, pts: r.pts.map(toG) }); continue; }
+        // Michigan's own roads replace the regional ones inside the state
+        let run = [];
+        for (const p of r.pts) {
+          if (inRings(p[0], p[1], mi)) { if (run.length > 1) out.push({ cls: r.cls, pts: run.map(toG) }); run = []; }
+          else run.push(p);
+        }
+        if (run.length > 1) out.push({ cls: r.cls, pts: run.map(toG) });
+      }
+      if (miKeys) {
+        const seen = new Set();
+        for (const k of miKeys) for (const l of state.miRoads.get(k)) {
+          if (seen.has(l.id)) continue;
+          seen.add(l.id);
+          out.push({ cls: l.cls, pts: l.pts.map(toG) });
+        }
+      }
       state.mapGrid = {
-        roads: state.mapData.roads.filter(r => hit(r.bb)).map(r => ({ cls: r.cls, pts: r.pts.map(p => lonLatToGrid(lake.geo, p[0], p[1])) })),
+        roads: out,
         places: state.mapData.places.filter(p => p.lon >= need[0] && p.lon <= need[2] && p.lat >= need[1] && p.lat <= need[3])
           .map(p => { const g = lonLatToGrid(lake.geo, p.lon, p.lat); return Object.assign({ gx: g[0], gy: g[1] }, p); })
       };
       state.mapGridKey = key;
     }
-    return C.mapOverlay(result, state.mapGrid, { detail, holeDia: o.holeDia, title: o.title, subtitle: o.subtitle });
+    return C.mapOverlay(result, state.mapGrid, { roads, towns, holeDia: o.holeDia, title: o.title, subtitle: o.subtitle });
   }
 
   let lakeCounter = 0;
@@ -397,7 +470,8 @@
     saveSettings();
     $('nLayersOut').textContent = $('nLayers').value;
     $('smoothOut').textContent = $('smooth').value;
-    $('mapDetailOut').textContent = DETAIL_NAMES[parseInt($('mapDetail').value, 10)];
+    $('roadDetailOut').textContent = ROAD_NAMES[parseInt($('roadDetail').value, 10)];
+    $('townDetailOut').textContent = TOWN_NAMES[parseInt($('townDetail').value, 10)];
     const mp = parseFloat($('minPiece').value);
     $('minPieceOut').textContent = mp ? fmtLen(mp).replace('"', ' in') : 'off';
     $('subtitle').placeholder = autoSubtitle();
@@ -414,8 +488,7 @@
     });
     state.opts = o;
     state.settings = s;
-    const detail = parseInt($('mapDetail').value, 10);
-    o.mapPath = mapPathFor(state.result, o, detail);
+    o.mapPath = mapPathFor(state.result, o, parseInt($('roadDetail').value, 10), parseInt($('townDetail').value, 10));
     render();
   }
 
@@ -450,8 +523,9 @@
     const pieces = r.layers.reduce((a, l) => a + l.polygons.reduce((b, p) => b + p.length - 1, 0), 0);
     let warn = '';
     if (r.layers.length < s.n && !s.custom.length) warn = `Only ${r.layers.length} distinct depth steps fit this lake — turn off rounding or use fewer layers.`;
-    if (parseInt($('mapDetail').value, 10) && !lake.geo) warn += (warn ? ' ' : '') + 'Map details need a lake from the Great Lakes or Pick on map tabs.';
-    else if (parseInt($('mapDetail').value, 10) && state.mapOutside) warn += (warn ? ' ' : '') + 'Map details cover the Great Lakes region only.';
+    const wantMap = parseInt($('roadDetail').value, 10) || parseInt($('townDetail').value, 10);
+    if (wantMap && !lake.geo) warn += (warn ? ' ' : '') + 'Roads and towns need a lake from the Great Lakes or Pick on map tabs.';
+    else if (wantMap && state.mapNote) warn += (warn ? ' ' : '') + state.mapNote;
     if (s.holeDia && L.margin < s.holeDia * 1.8) warn += (warn ? ' ' : '') + 'Border is too narrow for pin holes, so they were left off.';
     $('summary').innerHTML =
       `<span><b>${esc(lake.name || 'Lake')}</b></span>` +
@@ -706,7 +780,7 @@
 
     const live = ['nLayers', 'spacing', 'depthUnit', 'nice', 'customDepths', 'backing', 'shape', 'width', 'height',
       'margin', 'radius', 'thickness', 'holeDia', 'smooth', 'minPiece', 'useTitle', 'useSubtitle', 'title', 'subtitle',
-      'labels', 'guides', 'cutColor', 'scoreColor', 'strokeWidth', 'palette', 'mapDetail'];
+      'labels', 'guides', 'cutColor', 'scoreColor', 'strokeWidth', 'palette', 'roadDetail', 'townDetail'];
     for (const id of live) {
       $(id).addEventListener('input', scheduleRegen);
       $(id).addEventListener('change', scheduleRegen);

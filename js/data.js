@@ -156,7 +156,7 @@
   let mapDataPromise = null;
   function loadMapData() {
     if (!mapDataPromise) {
-      mapDataPromise = fetch('data-map.json?v=1').then(r => {
+      mapDataPromise = fetch('data-map.json?v=2').then(r => {
         if (!r.ok) throw new Error('map data file missing (' + r.status + ')');
         return r.json();
       }).then(j => ({
@@ -170,10 +170,37 @@
           }
           return { cls: r[0], pts, bb: [x0, y0, x1, y1] };
         }),
-        places: j.places.map(p => ({ cls: p[0], name: p[1], pop: p[2], lon: p[3], lat: p[4] }))
+        places: j.places.map(p => ({ cls: p[0], name: p[1], pop: p[2], lon: p[3], lat: p[4] })),
+        michigan: (j.michigan || []).map(r => { const o = []; for (let i = 0; i < r.length; i += 2) o.push([r[i], r[i + 1]]); return o; })
       })).catch(e => { mapDataPromise = null; throw e; });
     }
     return mapDataPromise;
+  }
+
+  // Michigan roads (TIGER/Line), tiled by tools/build_michigan_roads.py
+  let miIndexPromise = null;
+  const miTiles = new Map();
+  function loadMiIndex() {
+    if (!miIndexPromise) {
+      miIndexPromise = fetch('data/mi-roads/index.json', { cache: 'no-cache' })
+        .then(r => r.ok ? r.json() : null).catch(() => null);
+    }
+    return miIndexPromise;
+  }
+  function loadMiTile(key, scale) {
+    if (!miTiles.has(key)) {
+      miTiles.set(key, fetch('data/mi-roads/' + key + '.json').then(r => {
+        if (!r.ok) throw new Error('road tile ' + key + ' missing');
+        return r.json();
+      }).then(j => j.r.map(a => {
+        const pts = [];
+        let x = a[1], y = a[2];
+        pts.push([x / scale, y / scale]);
+        for (let i = 3; i < a.length; i += 2) { x += a[i]; y += a[i + 1]; pts.push([x / scale, y / scale]); }
+        return { cls: a[0], pts, id: a[0] + ':' + a[1] + ':' + a[2] + ':' + a.length };
+      })).catch(e => { miTiles.delete(key); throw e; }));
+    }
+    return miTiles.get(key);
   }
 
   /** Mask pixels that fall inside any [minLon,minLat,maxLon,maxLat] box. */
@@ -292,5 +319,5 @@
     return { vals, w, h, rawAspect: 1, geoAspect: 1, geographic: false, nodata: null, min: 0, max: 1, isImage: true };
   }
 
-  root.LakeData = { loadMapData, fetchNOAA, fetchElevation, excludeMask, chooseZoom, readGeoTIFF, readASC, readImage, valuesToDepth, stats };
+  root.LakeData = { loadMapData, loadMiIndex, loadMiTile, fetchNOAA, fetchElevation, excludeMask, chooseZoom, readGeoTIFF, readASC, readImage, valuesToDepth, stats };
 })(typeof self !== 'undefined' ? self : this);

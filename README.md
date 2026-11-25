@@ -5,7 +5,9 @@ A static web tool that turns lake bathymetry into stacked, laser-cuttable SVG sh
 - **All five Great Lakes are built in.** One click downloads NOAA's Great Lakes bathymetry from NOAA NCEI's public DEM Global Mosaic image service.
 - **Pick on map**: Michigan inland lakes load automatically from the Michigan DNR's lake contour maps, and the tool builds a smooth lake floor through every contour. Other lakes use NOAA's data where it exists.
 - **Upload data** covers every other lake. It accepts a GeoTIFF, an Esri ASCII grid (`.asc`), or a grayscale image.
-- **Map details:** a slider adds highways and towns to the top sheet as score lines and labels. The data is bundled in `data-map.json` (Natural Earth roads, GeoNames towns, Great Lakes region), so it works offline and never waits on a server. Lines are clipped to the land and kept clear of the title and pin holes.
+- **Roads and towns:** two sliders add them to the top sheet as score lines and labels, clipped to the land and kept clear of the title and pin holes. Everything is bundled with the site, so it never waits on an outside server:
+  - `data-map.json`: Natural Earth highways, GeoNames towns (1,000+ people) and a Michigan outline, for the Great Lakes region.
+  - `data/mi-roads/`: Michigan's full road network (US Census TIGER/Line), tiled. It's built by the **Build Michigan roads** GitHub Action (`tools/build_michigan_roads.py`). Inside Michigan it replaces the regional roads, and it adds local streets.
 - **Output:** one SVG per sheet at real size (mm). Red lines are cuts and blue lines are scores. Each sheet gets alignment pin holes, a hidden sheet number and glue guides. The top sheet gets an engraved title in a single-stroke font, so there's no font conversion to do. You can download everything as a ZIP that also has a combined sheet and assembly notes.
 
 There's no build step and no server code. Every library is vendored in `vendor/`, so the site runs entirely in the browser.
@@ -55,7 +57,9 @@ index.html        page layout
 css/style.css     styles
 js/core.js        geometry engine: lake isolation, smoothing, contours, SVG + engraving font
 js/data.js        NOAA fetcher and GeoTIFF / ASCII / image readers
-js/dnr.js         Michigan DNR contour loader: lake lookup, contour fill, smooth floor
+js/dnr.js         Michigan DNR contour loader: lake lookup, smooth floor through contours
+tools/            build_michigan_roads.py (run by .github/workflows/build-michigan-roads.yml)
+data/mi-roads/    Michigan road tiles (generated)
 js/app.js         UI, preview, downloads
 vendor/           d3-contour, d3-array, geotiff.js, JSZip, Leaflet
 ```
@@ -63,7 +67,7 @@ vendor/           d3-contour, d3-array, geotiff.js, JSZip, Leaflet
 ## Credits
 
 - Depth data: NOAA NCEI Great Lakes Bathymetry, served through the NCEI DEM Global Mosaic. Michigan inland lakes: MDNR / IFR Inland Lake Contours (State of Michigan Open Data).
-- Map tiles: © OpenStreetMap contributors. Roads: Natural Earth (public domain). Towns: GeoNames (CC BY 4.0).
+- Map tiles: © OpenStreetMap contributors. Roads: Natural Earth (public domain); Michigan roads: US Census Bureau TIGER/Line (public domain). Towns: GeoNames (CC BY 4.0).
 - Libraries: d3-contour and d3-array (ISC), geotiff.js (MIT), JSZip (MIT/GPLv3), Leaflet (BSD-2).
 
 These depth maps are decorative and not for navigation.
