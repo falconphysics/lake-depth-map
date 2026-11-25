@@ -529,6 +529,136 @@
     return r.toLocaleString('en-US') + (unit === 'ft' ? ' FT' : ' M');
   }
 
+  /** Where the title and subtitle go on the top sheet: [{text, cx, cy, size, maxW}]. */
+  function titleItems(result, o) {
+    const L = result.layout, out = [];
+    if (!(o.title || o.subtitle) || !L.titleH) return out;
+    let th = L.titleH;
+    if (L.shape === 'circle') {
+      const R = L.W / 2, Ri = R - L.margin * 0.4;
+      const lakeBottom = L.oy + result.grid.h * L.scale;
+      const avail = (L.H - L.margin * 0.6) - lakeBottom;
+      const both = o.title && o.subtitle;
+      th = Math.min(th, avail / (both ? 2.3 : 1.5));
+      if (th < 2) return out;
+      const blockH = th * (both ? 1.75 : 1);
+      const top = lakeBottom + (avail - blockH) / 2;
+      const chordAt = (yy) => 2 * Math.sqrt(Math.max(0, Ri * Ri - (yy - R) * (yy - R)));
+      out.push({ text: o.title || o.subtitle, cx: R, cy: top + th / 2, size: th, maxW: chordAt(top + th) * 0.82 });
+      if (both) out.push({ text: o.subtitle, cx: R, cy: top + th * 1.45, size: th * 0.55, maxW: chordAt(top + blockH) * 0.82 });
+    } else {
+      const bandTop = L.H - L.margin - L.band;
+      const maxW = L.W - 2 * L.margin;
+      const mid = (bandTop + L.H) / 2; // centre of the bottom border
+      if (o.title && o.subtitle) {
+        out.push({ text: o.title, cx: L.W / 2, cy: mid - th * 0.4, size: th, maxW });
+        out.push({ text: o.subtitle, cx: L.W / 2, cy: mid + th * 0.6, size: th * 0.55, maxW });
+      } else out.push({ text: o.title || o.subtitle, cx: L.W / 2, cy: mid, size: th, maxW });
+    }
+    return out;
+  }
+  function textBox(t) {
+    let sz = t.size;
+    const tw = textWidth(t.text, sz);
+    if (t.maxW && tw > t.maxW) sz = t.size * t.maxW / tw;
+    const w = textWidth(t.text, sz);
+    return [t.cx - w / 2, t.cy - sz / 2, t.cx + w / 2, t.cy + sz / 2];
+  }
+
+  /**
+   * Roads and towns engraved on the top sheet's land.
+   * feats: { roads: [{cls, pts:[[gx,gy],...]}], places: [{cls, name, gx, gy}] } in grid pixels
+   *   (cls 1 = most important). Returns an SVG path string (mm).
+   */
+  function mapOverlay(result, feats, o) {
+    const L = result.layout, g = result.grid;
+    const sx = L.aspect * L.scale, sy = L.scale;
+    const toMM = (gx, gy) => [L.ox + gx * sx, L.oy + gy * sy];
+    const edge = Math.max(1.5, L.margin * 0.12);
+    const holes = registrationHoles(L, o.holeDia || 0);
+    const holeR = Math.max(3, (o.holeDia || 0) * 1.6);
+    const blocked = titleItems(result, o).map(t => { const b = textBox(t), p = Math.max(2, t.size * 0.5); return [b[0] - p * 1.5, b[1] - p, b[2] + p * 1.5, b[3] + p]; });
+    const water = (x, y) => {
+      const gx = Math.floor((x - L.ox) / sx), gy = Math.floor((y - L.oy) / sy);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const X = gx + dx, Y = gy + dy;
+        if (X >= 0 && Y >= 0 && X < g.w && Y < g.h && g.depth[Y * g.w + X] >= 0) return true;
+      }
+      return false;
+    };
+    const onPanel = (x, y) => {
+      if (L.shape === 'circle') { const r = L.W / 2; return Math.hypot(x - r, y - r) < r - edge; }
+      return x > edge && y > edge && x < L.W - edge && y < L.H - edge;
+    };
+    const ok = (x, y) => {
+      if (!onPanel(x, y) || water(x, y)) return false;
+      for (const h of holes) if (Math.hypot(x - h[0], y - h[1]) < holeR) return false;
+      for (const b of blocked) if (x > b[0] && x < b[2] && y > b[1] && y < b[3]) return false;
+      return true;
+    };
+    let d = '';
+    // roads: densify, keep the runs that stay on land, simplify
+    for (const r of feats.roads || []) {
+      if (r.cls > o.detail) continue;
+      let run = [];
+      const flush = () => {
+        if (run.length > 1) {
+          let len = 0;
+          for (let i = 1; i < run.length; i++) len += Math.hypot(run[i][0] - run[i - 1][0], run[i][1] - run[i - 1][1]);
+          if (len > 1.5) {
+            const simp = dpOpen(run, 0.12 * 0.12);
+            d += 'M' + simp.map(p => fmt(p[0]) + ' ' + fmt(p[1])).join('L');
+          }
+        }
+        run = [];
+      };
+      for (let i = 0; i < r.pts.length; i++) {
+        const b = toMM(r.pts[i][0], r.pts[i][1]);
+        const a = i ? toMM(r.pts[i - 1][0], r.pts[i - 1][1]) : b;
+        const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 0.4));
+        for (let k = i ? 1 : 0; k <= n; k++) {
+          const x = a[0] + (b[0] - a[0]) * k / n, y = a[1] + (b[1] - a[1]) * k / n;
+          if (ok(x, y)) run.push([x, y]); else flush();
+        }
+      }
+      flush();
+    }
+    // places: dot + label, most important first, no collisions
+    const base = Math.max(2.2, Math.min(4.5, L.W * 0.011));
+    const placed = [];
+    const free = (b) => {
+      for (const p of placed) if (b[0] < p[2] && b[2] > p[0] && b[1] < p[3] && b[3] > p[1]) return false;
+      for (let i = 0; i <= 4; i++) for (let j = 0; j <= 2; j++) {
+        if (!ok(b[0] + (b[2] - b[0]) * i / 4, b[1] + (b[3] - b[1]) * j / 2)) return false;
+      }
+      return true;
+    };
+    const placeMax = [0, 1, 2, 2, 3][Math.max(0, Math.min(4, o.detail))]; // cities / towns / villages
+    const places = (feats.places || []).filter(p => p.cls <= placeMax)
+      .sort((a, b) => a.cls - b.cls || (b.pop || 0) - (a.pop || 0));
+    for (const p of places) {
+      const [x, y] = toMM(p.gx, p.gy);
+      const rDot = p.cls === 1 ? 0.75 : 0.5;
+      const dotBox = [x - rDot - 0.4, y - rDot - 0.4, x + rDot + 0.4, y + rDot + 0.4];
+      if (!free(dotBox)) continue;
+      const size = base * (p.cls === 1 ? 1 : p.cls === 2 ? 0.82 : 0.68);
+      const name = String(p.name).normalize('NFD').replace(/[̀-ͯ]/g, '');
+      const tw = textWidth(name, size), gap = rDot + size * 0.35;
+      const tries = [
+        [x + gap, y - size / 2], [x - gap - tw, y - size / 2],
+        [x - tw / 2, y - gap - size], [x - tw / 2, y + gap]
+      ];
+      for (const [tx, ty] of tries) {
+        const box = [tx - 0.4, ty - 0.4, tx + tw + 0.4, ty + size + 0.4];
+        if (!free(box)) continue;
+        placed.push(dotBox, box);
+        d += circlePath([x, y], rDot) + textPath(name, tx, ty, size);
+        break;
+      }
+    }
+    return d;
+  }
+
   /**
    * Build the SVG for one layer.
    * result: output of buildLayers; k: 0-based layer index, or result.layers.length for the backing
@@ -551,36 +681,7 @@
       const y = L.shape === 'circle' ? L.margin * 0.5 : L.margin * 0.5;
       score.push(textPathCentered(text, L.W / 2, y, labelSize, L.W * 0.5));
     }
-    if (k === 0 && (o.title || o.subtitle) && L.titleH) {
-      let th = L.titleH, cy;
-      if (L.shape === 'circle') {
-        const R = L.W / 2, Ri = R - L.margin * 0.4;
-        const lakeBottom = L.oy + result.grid.h * L.scale;
-        const avail = (L.H - L.margin * 0.6) - lakeBottom;
-        const both = o.title && o.subtitle;
-        th = Math.min(th, avail / (both ? 2.3 : 1.5));
-        if (th >= 2) {
-          const blockH = th * (both ? 1.75 : 1);
-          const top = lakeBottom + (avail - blockH) / 2;
-          const chordAt = (yy) => 2 * Math.sqrt(Math.max(0, Ri * Ri - (yy - R) * (yy - R)));
-          const t1 = o.title || o.subtitle;
-          score.push(textPathCentered(t1, R, top + th / 2, th, chordAt(top + th) * 0.82));
-          if (both) score.push(textPathCentered(o.subtitle, R, top + th * 1.45, th * 0.55, chordAt(top + blockH) * 0.82));
-        }
-      } else {
-        const bandTop = L.H - L.margin - L.band;
-        const maxW = L.W - 2 * L.margin;
-        const mid = (bandTop + L.H) / 2; // centre of the bottom border
-        if (o.title && o.subtitle) {
-          cy = mid;
-          score.push(textPathCentered(o.title, L.W / 2, cy - th * 0.4, th, maxW));
-          score.push(textPathCentered(o.subtitle, L.W / 2, cy + th * 0.6, th * 0.55, maxW));
-        } else {
-          cy = mid;
-          score.push(textPathCentered(o.title || o.subtitle, L.W / 2, cy, th, maxW));
-        }
-      }
-    }
+    if (k === 0) for (const t of titleItems(result, o)) score.push(textPathCentered(t.text, t.cx, t.cy, t.size, t.maxW));
 
     const sw = o.strokeWidth || 0.1;
     const name = isBacking ? 'Backing' : `Layer ${k + 1}`;
@@ -588,6 +689,7 @@
       `<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(L.W)}mm" height="${fmt(L.H)}mm" viewBox="0 0 ${fmt(L.W)} ${fmt(L.H)}">\n` +
       `<title>${esc(o.lakeName || 'Lake')} — ${name}</title>\n` +
       `<g id="cut" fill="none" stroke="${o.cutColor || '#FF0000'}" stroke-width="${sw}">\n<path fill-rule="evenodd" d="${cut.join('')}"/>\n</g>\n` +
+      (k === 0 && o.mapPath ? `<g id="map" fill="none" stroke="${o.scoreColor || '#0000FF'}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">\n<path d="${o.mapPath}"/>\n</g>\n` : '') +
       (score.length ? `<g id="score" fill="none" stroke="${o.scoreColor || '#0000FF'}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">\n<path d="${score.join('')}"/>\n</g>\n` : '') +
       `</svg>\n`;
   }
@@ -611,7 +713,7 @@
 
   return {
     M_PER_FT, PRESETS, floodFill, largestComponent, isolateLake, smoothLake, layerDepths,
-    buildLayers, panelLayout, layerSVG, combinedSVG, polygonsPath, panelOutlinePath,
+    buildLayers, panelLayout, layerSVG, mapOverlay, titleItems, combinedSVG, polygonsPath, panelOutlinePath,
     registrationHoles, ringArea, simplifyRing, chaikin, textPath, textWidth, formatDepth, GLYPHS
   };
 });

@@ -221,7 +221,7 @@
       depth[i] = mask[i] ? Math.max(0.01, floorFt[i] * M_PER_FT) : -1;
       if (depth[i] > maxDepth) maxDepth = depth[i];
     }
-    return { depth, w, h, maxDepth, levelsFt: levels, name };
+    return { depth, w, h, maxDepth, levelsFt: levels, name, geo: { mx0: x0, my1: y1, mpp: 1 / scale } };
   }
 
   root.LakeDNR = { inMichigan, findLakeAt, loadLake };

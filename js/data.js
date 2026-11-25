@@ -144,8 +144,54 @@
     onProgress && onProgress(1, 1);
     return {
       elev, w: W, h: H,
+      geo: { mx0: ex[0], my1: ex[3], mpp: (ex[2] - ex[0]) / W }, // Web Mercator georeference of pixel (0,0)
       toPixel: (lon, lat) => [(mercX(lon) - ex[0]) / (ex[2] - ex[0]) * W, (ex[3] - mercY(lat)) / (ex[3] - ex[1]) * H]
     };
+  }
+
+  // ---------------------------------------------------------------- OpenStreetMap
+  const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+  const ROAD_CLASSES = ['motorway', 'trunk', 'primary', 'secondary'];   // detail 1..4
+  const PLACE_CLASSES = ['city', 'town', 'village'];
+  const PLACE_FOR_DETAIL = [0, 1, 2, 2, 3];
+
+  /**
+   * Major roads and towns from OpenStreetMap (Overpass API) for bbox [W,S,E,N].
+   * Returns { roads:[{cls, pts:[[lon,lat],...]}], places:[{cls,name,pop,lon,lat}] }.
+   */
+  async function fetchOSM(bbox, detail, signal) {
+    const b = `${bbox[1]},${bbox[0]},${bbox[3]},${bbox[2]}`;
+    const roads = ROAD_CLASSES.slice(0, detail).join('|');
+    const places = PLACE_CLASSES.slice(0, PLACE_FOR_DETAIL[detail]).join('|');
+    const q = `[out:json][timeout:90];(` +
+      (roads ? `way["highway"~"^(${roads})$"](${b});` : '') +
+      (places ? `node["place"~"^(${places})$"]["name"](${b});` : '') +
+      `);out geom qt;`;
+    let lastErr;
+    for (const url of OVERPASS) {
+      try {
+        const res = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q),
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal });
+        if (!res.ok) throw new Error('map server answered ' + res.status);
+        const j = await res.json();
+        const out = { roads: [], places: [] };
+        for (const e of j.elements || []) {
+          const t = e.tags || {};
+          if (e.type === 'way' && e.geometry) {
+            const cls = ROAD_CLASSES.indexOf(t.highway) + 1;
+            if (cls > 0) out.roads.push({ cls, pts: e.geometry.map(p => [p.lon, p.lat]) });
+          } else if (e.type === 'node' && t.name) {
+            const cls = PLACE_CLASSES.indexOf(t.place) + 1;
+            if (cls > 0) out.places.push({ cls, name: t.name, pop: parseInt(String(t.population || '0').replace(/\D/g, ''), 10) || 0, lon: e.lon, lat: e.lat });
+          }
+        }
+        return out;
+      } catch (e) {
+        if (signal && signal.aborted) throw e;
+        lastErr = e;
+      }
+    }
+    throw lastErr;
   }
 
   /** Mask pixels that fall inside any [minLon,minLat,maxLon,maxLat] box. */
@@ -264,5 +310,5 @@
     return { vals, w, h, rawAspect: 1, geoAspect: 1, geographic: false, nodata: null, min: 0, max: 1, isImage: true };
   }
 
-  root.LakeData = { fetchNOAA, fetchElevation, excludeMask, chooseZoom, readGeoTIFF, readASC, readImage, valuesToDepth, stats };
+  root.LakeData = { fetchOSM, fetchNOAA, fetchElevation, excludeMask, chooseZoom, readGeoTIFF, readASC, readImage, valuesToDepth, stats };
 })(typeof self !== 'undefined' ? self : this);
