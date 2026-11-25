@@ -184,7 +184,7 @@
 
   // ------------------------------------------------------------------ map details (OpenStreetMap)
   const R_EARTH = 6378137;
-  const DETAIL_NAMES = ['Off', 'Cities + freeways', '+ towns + highways', '+ main roads', '+ villages + secondary roads'];
+  const DETAIL_NAMES = ['Off', 'Cities + freeways', '+ towns + US highways', '+ state highways', '+ villages'];
   function lonLatToGrid(geo, lon, lat) {
     const mx = R_EARTH * lon * Math.PI / 180, my = R_EARTH * Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360));
     return [(mx - geo.mx0) / geo.mpp, (geo.my1 - my) / geo.mpp];
@@ -201,48 +201,34 @@
     const padX = (b[0] - a[0]) * 0.05, padY = (a[1] - b[1]) * 0.05;
     return [a[0] - padX, b[1] - padY, b[0] + padX, a[1] + padY];
   }
-  const covers = (big, small) => big[0] <= small[0] && big[1] <= small[1] && big[2] >= small[2] && big[3] >= small[3];
-
-  /** Map path for the top sheet, or kick off a download and return null. */
+  /** Map path for the top sheet from the bundled data, or null (and load it) if not ready. */
   function mapPathFor(result, o, detail) {
     const lake = state.lake;
     if (!detail || !lake.geo) return null;
+    if (!state.mapData) {
+      if (!state.mapDataLoading) {
+        state.mapDataLoading = true;
+        status('Loading map details…', 0.5);
+        D.loadMapData().then(d => { state.mapData = d; status(''); regenerate(); })
+          .catch(e => { console.error(e); status('Could not load the map details file (' + (e.message || e) + ').', 0, true); })
+          .finally(() => { state.mapDataLoading = false; });
+      }
+      return null;
+    }
     const need = panelLonLatBox(result, lake.geo);
-    const c = state.osm;
-    if (c && c.lakeId === lake.id && c.detail >= detail && covers(c.bbox, need)) {
-      if (!c.grid) c.grid = {
-        roads: c.data.roads.map(r => ({ cls: r.cls, pts: r.pts.map(p => lonLatToGrid(lake.geo, p[0], p[1])) })),
-        places: c.data.places.map(p => { const g = lonLatToGrid(lake.geo, p.lon, p.lat); return Object.assign({ gx: g[0], gy: g[1] }, p); })
+    const db = state.mapData.bbox;
+    state.mapOutside = need[2] < db[0] || need[0] > db[2] || need[3] < db[1] || need[1] > db[3];
+    const key = lake.id + ':' + need.map(v => v.toFixed(3)).join(',');
+    if (state.mapGridKey !== key) {
+      const hit = (b) => b[2] >= need[0] && b[0] <= need[2] && b[3] >= need[1] && b[1] <= need[3];
+      state.mapGrid = {
+        roads: state.mapData.roads.filter(r => hit(r.bb)).map(r => ({ cls: r.cls, pts: r.pts.map(p => lonLatToGrid(lake.geo, p[0], p[1])) })),
+        places: state.mapData.places.filter(p => p.lon >= need[0] && p.lon <= need[2] && p.lat >= need[1] && p.lat <= need[3])
+          .map(p => { const g = lonLatToGrid(lake.geo, p.lon, p.lat); return Object.assign({ gx: g[0], gy: g[1] }, p); })
       };
-      return C.mapOverlay(result, c.grid, { detail, holeDia: o.holeDia, title: o.title, subtitle: o.subtitle, margin: result.layout.margin });
+      state.mapGridKey = key;
     }
-    const pend = state.osmPending;
-    if (!(pend && pend.lakeId === lake.id && pend.detail >= detail && covers(pend.bbox, need))) loadOSM(need, detail);
-    return null;
-  }
-
-  let osmJob = 0;
-  async function loadOSM(bbox, detail) {
-    const lakeId = state.lake.id, job = ++osmJob;
-    // fetch a bit wider so small size changes don't need a new download
-    const wx = (bbox[2] - bbox[0]) * 0.15, wy = (bbox[3] - bbox[1]) * 0.15;
-    const box = [bbox[0] - wx, bbox[1] - wy, bbox[2] + wx, bbox[3] + wy];
-    state.osmPending = { lakeId, detail, bbox: box };
-    const big = (box[2] - box[0]) * (box[3] - box[1]) > 6;
-    status(`Downloading roads and towns from OpenStreetMap…${big && detail >= 3 ? ' (large area — this can take 30 seconds or more)' : ''}`, 0.4);
-    try {
-      const data = await D.fetchOSM(box, detail);
-      if (job !== osmJob || !state.lake || state.lake.id !== lakeId) return;
-      state.osm = { lakeId, detail, bbox: box, data, grid: null };
-      state.osmPending = null;
-      status('');
-      regenerate();
-    } catch (e) {
-      if (job !== osmJob) return;
-      state.osmPending = null;
-      console.error(e);
-      status('Could not download map details from OpenStreetMap (' + (e.message || e) + '). Try again, or lower the detail.', 0, true);
-    }
+    return C.mapOverlay(result, state.mapGrid, { detail, holeDia: o.holeDia, title: o.title, subtitle: o.subtitle });
   }
 
   let lakeCounter = 0;
@@ -465,6 +451,7 @@
     let warn = '';
     if (r.layers.length < s.n && !s.custom.length) warn = `Only ${r.layers.length} distinct depth steps fit this lake — turn off rounding or use fewer layers.`;
     if (parseInt($('mapDetail').value, 10) && !lake.geo) warn += (warn ? ' ' : '') + 'Map details need a lake from the Great Lakes or Pick on map tabs.';
+    else if (parseInt($('mapDetail').value, 10) && state.mapOutside) warn += (warn ? ' ' : '') + 'Map details cover the Great Lakes region only.';
     if (s.holeDia && L.margin < s.holeDia * 1.8) warn += (warn ? ' ' : '') + 'Border is too narrow for pin holes, so they were left off.';
     $('summary').innerHTML =
       `<span><b>${esc(lake.name || 'Lake')}</b></span>` +

@@ -149,49 +149,31 @@
     };
   }
 
-  // ---------------------------------------------------------------- OpenStreetMap
-  const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
-  const ROAD_CLASSES = ['motorway', 'trunk', 'primary', 'secondary'];   // detail 1..4
-  const PLACE_CLASSES = ['city', 'town', 'village'];
-  const PLACE_FOR_DETAIL = [0, 1, 2, 2, 3];
-
-  /**
-   * Major roads and towns from OpenStreetMap (Overpass API) for bbox [W,S,E,N].
-   * Returns { roads:[{cls, pts:[[lon,lat],...]}], places:[{cls,name,pop,lon,lat}] }.
-   */
-  async function fetchOSM(bbox, detail, signal) {
-    const b = `${bbox[1]},${bbox[0]},${bbox[3]},${bbox[2]}`;
-    const roads = ROAD_CLASSES.slice(0, detail).join('|');
-    const places = PLACE_CLASSES.slice(0, PLACE_FOR_DETAIL[detail]).join('|');
-    const q = `[out:json][timeout:90];(` +
-      (roads ? `way["highway"~"^(${roads})$"](${b});` : '') +
-      (places ? `node["place"~"^(${places})$"]["name"](${b});` : '') +
-      `);out geom qt;`;
-    let lastErr;
-    for (const url of OVERPASS) {
-      try {
-        const res = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q),
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal });
-        if (!res.ok) throw new Error('map server answered ' + res.status);
-        const j = await res.json();
-        const out = { roads: [], places: [] };
-        for (const e of j.elements || []) {
-          const t = e.tags || {};
-          if (e.type === 'way' && e.geometry) {
-            const cls = ROAD_CLASSES.indexOf(t.highway) + 1;
-            if (cls > 0) out.roads.push({ cls, pts: e.geometry.map(p => [p.lon, p.lat]) });
-          } else if (e.type === 'node' && t.name) {
-            const cls = PLACE_CLASSES.indexOf(t.place) + 1;
-            if (cls > 0) out.places.push({ cls, name: t.name, pop: parseInt(String(t.population || '0').replace(/\D/g, ''), 10) || 0, lon: e.lon, lat: e.lat });
+  // ---------------------------------------------------------------- bundled map details
+  // data-map.json: roads [cls, lon,lat, lon,lat, ...] and places [cls, name, pop, lon, lat]
+  // for the Great Lakes region (Natural Earth roads, GeoNames towns). Shipped with the site,
+  // so it always works and never waits on an outside server.
+  let mapDataPromise = null;
+  function loadMapData() {
+    if (!mapDataPromise) {
+      mapDataPromise = fetch('data-map.json?v=1').then(r => {
+        if (!r.ok) throw new Error('map data file missing (' + r.status + ')');
+        return r.json();
+      }).then(j => ({
+        bbox: j.bbox,
+        roads: j.roads.map(r => {
+          const pts = [];
+          let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+          for (let i = 1; i < r.length; i += 2) {
+            pts.push([r[i], r[i + 1]]);
+            x0 = Math.min(x0, r[i]); x1 = Math.max(x1, r[i]); y0 = Math.min(y0, r[i + 1]); y1 = Math.max(y1, r[i + 1]);
           }
-        }
-        return out;
-      } catch (e) {
-        if (signal && signal.aborted) throw e;
-        lastErr = e;
-      }
+          return { cls: r[0], pts, bb: [x0, y0, x1, y1] };
+        }),
+        places: j.places.map(p => ({ cls: p[0], name: p[1], pop: p[2], lon: p[3], lat: p[4] }))
+      })).catch(e => { mapDataPromise = null; throw e; });
     }
-    throw lastErr;
+    return mapDataPromise;
   }
 
   /** Mask pixels that fall inside any [minLon,minLat,maxLon,maxLat] box. */
@@ -310,5 +292,5 @@
     return { vals, w, h, rawAspect: 1, geoAspect: 1, geographic: false, nodata: null, min: 0, max: 1, isImage: true };
   }
 
-  root.LakeData = { fetchOSM, fetchNOAA, fetchElevation, excludeMask, chooseZoom, readGeoTIFF, readASC, readImage, valuesToDepth, stats };
+  root.LakeData = { loadMapData, fetchNOAA, fetchElevation, excludeMask, chooseZoom, readGeoTIFF, readASC, readImage, valuesToDepth, stats };
 })(typeof self !== 'undefined' ? self : this);

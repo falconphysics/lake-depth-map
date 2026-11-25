@@ -572,6 +572,7 @@
    */
   function mapOverlay(result, feats, o) {
     const L = result.layout, g = result.grid;
+    const roadMax = Math.min(3, o.detail); // freeways / US highways / state highways
     const sx = L.aspect * L.scale, sy = L.scale;
     const toMM = (gx, gy) => [L.ox + gx * sx, L.oy + gy * sy];
     const edge = Math.max(1.5, L.margin * 0.12);
@@ -599,7 +600,7 @@
     let d = '';
     // roads: densify, keep the runs that stay on land, simplify
     for (const r of feats.roads || []) {
-      if (r.cls > o.detail) continue;
+      if (r.cls > roadMax) continue;
       let run = [];
       const flush = () => {
         if (run.length > 1) {
