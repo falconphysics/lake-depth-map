@@ -75,40 +75,63 @@
   }
 
   // ------------------------------------------------------------------ loading lakes
-  async function loadFromTiles({ bbox, surface, seed, exclude, name, knownMaxDepth }) {
+  /**
+   * Download NOAA elevations and isolate the lake.
+   * surfaces: candidate lake-surface values. The Great Lakes are stored as depth below
+   * chart datum (surface 0) while most other places are height above sea level, so we
+   * try each candidate and keep the one whose deepest point best matches what we expect.
+   */
+  async function loadFromTiles({ bbox, surfaces, seed, exclude, name, knownMaxDepth }) {
     if (state.busy) return;
     state.busy = true;
     try {
-      status('Downloading depth tiles…', 0);
+      status('Downloading NOAA depth data…', 0.15);
       const target = parseInt($('resolution').value, 10);
-      const tile = await D.fetchElevation(bbox, target, (d, t) => status(`Downloading depth tiles… ${d}/${t}`, d / t));
-      status('Finding the lake…', 1);
+      const tile = await D.fetchNOAA(bbox, target, () => {});
+      status('Finding the lake…', 0.9);
       await tick();
-      const depth = new Float32Array(tile.w * tile.h);
-      for (let i = 0; i < depth.length; i++) depth[i] = surface - tile.elev[i];
       const seedPx = seed ? tile.toPixel(seed[0], seed[1]) : null;
       let seedElev = null;
       if (seedPx) {
         const sx = Math.round(seedPx[0]), sy = Math.round(seedPx[1]);
         if (sx >= 0 && sy >= 0 && sx < tile.w && sy < tile.h) seedElev = tile.elev[sy * tile.w + sx];
       }
-      const lake = C.isolateLake(depth, tile.w, tile.h, {
-        mode: seedPx ? 'seed' : 'largest', seed: seedPx, excludeMask: D.excludeMask(tile, exclude), minDepth: 0.3
-      });
-      if (!lake.waterPixels || lake.maxDepth < 1) {
-        const at = seedElev != null ? ` The ground at your marker is ${Math.round(seedElev)} m above sea level.` : '';
-        status(`No lake-floor depths found here — the terrain data is flat at this lake.${at} Check the surface elevation, or use Upload data.`, 0, true);
+      const excl = D.excludeMask(tile, exclude);
+      let best = null;
+      for (const surface of surfaces) {
+        if (!Number.isFinite(surface)) continue;
+        const depth = new Float32Array(tile.w * tile.h);
+        for (let i = 0; i < depth.length; i++) depth[i] = surface - tile.elev[i];
+        const lake = C.isolateLake(depth, tile.w, tile.h, {
+          mode: seedPx ? 'seed' : 'largest', seed: seedPx, excludeMask: excl, minDepth: 0.3
+        });
+        if (!lake.waterPixels || lake.maxDepth < 1) continue;
+        // robust max (99.9th percentile) so a single bad pixel can't throw off the check
+        const vals = [];
+        for (let i = 0; i < lake.depth.length; i++) if (lake.depth[i] > 0) vals.push(lake.depth[i]);
+        vals.sort((a, b) => a - b);
+        const p999 = vals[Math.floor(vals.length * 0.999)] || lake.maxDepth;
+        const score = knownMaxDepth ? Math.abs(Math.log(p999 / knownMaxDepth)) : -lake.waterPixels;
+        if (!best || score < best.score) best = { lake, score, p999 };
+      }
+      if (!best) {
+        const at = seedElev != null && Number.isFinite(seedElev) ? ` NOAA's value at your marker is ${Math.round(seedElev)} m.` : '';
+        status(`No lake-floor depths found here.${at} Check the surface elevation, or use Upload data — NOAA's mosaic doesn't have every lake.`, 0, true);
         return;
       }
-      lake.aspect = 1; // Web Mercator pixels are locally square
+      const lake = best.lake;
+      // clip isolated spikes to the robust max so they don't distort the layer steps
+      for (let i = 0; i < lake.depth.length; i++) if (lake.depth[i] > best.p999) lake.depth[i] = best.p999;
+      lake.maxDepth = best.p999;
+      lake.aspect = 1; // grid was requested with square (metre-wise) pixels
       setLake(Object.assign(lake, { name, knownMaxDepth }));
       status('');
     } catch (e) {
       console.error(e);
       const blocked = e instanceof TypeError;
       status(blocked
-        ? 'Couldn’t reach the depth-tile server. If you’re viewing this inside Claude, outside data is blocked there — it works once hosted on GitHub Pages. Try the demo lake or Upload data.'
-        : 'Could not download depth data (' + (e.message || e) + '). Check your connection and try again.', 0, true);
+        ? 'Couldn’t reach NOAA’s depth server. If you’re viewing this inside Claude, outside data is blocked there — it works on GitHub Pages. Otherwise try again in a minute; NOAA’s server is sometimes slow.'
+        : 'Could not download depth data (' + (e.message || e) + '). Try again in a minute.', 0, true);
     } finally {
       state.busy = false;
     }
@@ -117,7 +140,7 @@
   function loadPreset(key) {
     const p = C.PRESETS[key];
     document.querySelectorAll('.lake-btn').forEach(b => b.classList.toggle('active', b.dataset.lake === key));
-    return loadFromTiles({ bbox: p.bbox, surface: p.surface, seed: p.seed, exclude: p.exclude, name: p.name, knownMaxDepth: p.knownMaxDepth });
+    return loadFromTiles({ bbox: p.bbox, surfaces: [0, p.surface], seed: p.seed, exclude: p.exclude, name: p.name, knownMaxDepth: p.knownMaxDepth });
   }
 
   /** A made-up lake (two basins, an island, a shoal) for trying the tool without any downloads. */
@@ -177,14 +200,13 @@
     if (!state.map) return;
     const name = $('mapName').value.trim() || 'Lake';
     let surface = parseFloat($('mapSurface').value);
-    if (!Number.isFinite(surface)) { status('Enter the lake’s surface elevation first.', 0, true); return; }
-    if ($('mapSurfaceUnit').value === 'ft') surface *= C.M_PER_FT;
+    if (Number.isFinite(surface) && $('mapSurfaceUnit').value === 'ft') surface *= C.M_PER_FT;
     if (!state.marker) { status('Tap inside the lake on the map to drop a marker first.', 0, true); return; }
     const b = state.map.getBounds();
     const bbox = [b.getWest(), Math.max(-85, b.getSouth()), b.getEast(), Math.min(85, b.getNorth())];
     const ll = state.marker.getLatLng();
     document.querySelectorAll('.lake-btn').forEach(x => x.classList.remove('active'));
-    loadFromTiles({ bbox, surface, seed: [ll.lng, ll.lat], name });
+    loadFromTiles({ bbox, surfaces: Number.isFinite(surface) ? [surface, 0] : [0], seed: [ll.lng, ll.lat], name });
   }
 
   // ------------------------------------------------------------------ file tab
@@ -507,7 +529,7 @@
       '  2. Paint or stain (lighter = shallow, darker = deep looks great).',
       '  3. Glue each loose piece onto the NEXT sheet down - the blue score outline shows where.',
       '  4. Stack from the backing up, using pins through the corner holes to keep alignment.',
-      '', 'Depth data: AWS Terrain Tiles / NOAA NCEI Great Lakes Bathymetry, or your uploaded data. Not for navigation.');
+      '', 'Depth data: NOAA NCEI Great Lakes Bathymetry (DEM Global Mosaic), or your uploaded data. Not for navigation.');
     return lines.join('\r\n');
   }
 

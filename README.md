@@ -2,7 +2,7 @@
 
 A static web tool that turns lake bathymetry into stacked, laser-cuttable SVG sheets. When the sheets are cut from plywood, painted and stacked, they make a layered depth map for the wall.
 
-- **All five Great Lakes are built in.** One click downloads NOAA's Great Lakes bathymetry, streamed from the public AWS Terrain Tiles.
+- **All five Great Lakes are built in.** One click downloads NOAA's Great Lakes bathymetry from NOAA NCEI's public DEM Global Mosaic image service.
 - **Pick on map** works for any lake the global terrain data has lake-floor depths for.
 - **Upload data** covers every other lake. It accepts a GeoTIFF, an Esri ASCII grid (`.asc`), or a grayscale image.
 - **Output:** one SVG per sheet at real size (mm). Red lines are cuts and blue lines are scores. Each sheet gets alignment pin holes, a hidden sheet number and glue guides. The top sheet gets an engraved title in a single-stroke font, so there's no font conversion to do. You can download everything as a ZIP that also has a combined sheet and assembly notes.
@@ -37,7 +37,7 @@ You can also type your own depths into **Custom depths**.
 
 ## Data for other lakes
 
-The map option uses the [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/), which include real lake-floor depths for the Great Lakes. Most smaller lakes come back flat, as just the water surface, and the tool will tell you when that happens. For those lakes, upload a depth raster instead:
+The map option also uses NOAA's [DEM Global Mosaic](https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_global_mosaic/ImageServer). It has the Great Lakes, stored as depth below each lake's chart datum, plus whatever other lakes NOAA has digitized. If your lake comes back empty, the tool says so. For those lakes, upload a depth raster instead:
 
 - **NOAA NCEI** has bathymetric DEMs for many U.S. lakes and coasts: <https://www.ncei.noaa.gov/maps/bathymetry/>
 - **State DNRs** publish lake-depth data. Minnesota DNR, for example, has lake bathymetric DEMs.
@@ -59,7 +59,7 @@ vendor/           d3-contour, d3-array, geotiff.js, JSZip, Leaflet
 
 ## Credits
 
-- Depth data: AWS Terrain Tiles (Mapzen / Tilezen), which incorporate NOAA NCEI Great Lakes Bathymetry, USGS 3DEP/SRTM and ETOPO1. See the [attribution](https://github.com/tilezen/joerd/blob/master/docs/attribution.md).
+- Depth data: NOAA NCEI Great Lakes Bathymetry, served through the NCEI DEM Global Mosaic.
 - Map tiles: © OpenStreetMap contributors.
 - Libraries: d3-contour and d3-array (ISC), geotiff.js (MIT), JSZip (MIT/GPLv3), Leaflet (BSD-2).
 

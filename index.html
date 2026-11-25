@@ -40,7 +40,7 @@
           <button class="lake-btn" data-lake="ontario">Ontario<small>244 m · 802 ft</small></button>
           <button class="lake-btn demo" data-lake="demo">Demo lake<small>made up · no download</small></button>
         </div>
-        <p class="hint">Depths come from NOAA's Great Lakes bathymetry, streamed as public AWS terrain tiles.</p>
+        <p class="hint">Depths come straight from NOAA's Great Lakes bathymetry (NCEI DEM Global Mosaic).</p>
       </div>
 
       <div class="tabpane" id="tab-map">
@@ -54,7 +54,7 @@
             <span class="inline"><input type="number" id="mapSurface" step="0.1" placeholder="e.g. 1897"><select id="mapSurfaceUnit"><option value="m">m</option><option value="ft">ft</option></select></span>
           </label>
         </div>
-        <p class="hint">Look up the lake's surface elevation above sea level (Wikipedia lists it). Global terrain data has lake-floor depths for the Great Lakes and some very large lakes; most smaller lakes come back flat — use <b>Upload data</b> for those.</p>
+        <p class="hint">Enter the lake's surface elevation above sea level (Wikipedia lists it); leave it blank for the Great Lakes and their bays. NOAA's mosaic covers the Great Lakes and some other lakes — if yours comes back empty, use <b>Upload data</b>.</p>
         <button class="primary" id="mapLoad">Load lake from map view</button>
       </div>
 
@@ -239,9 +239,8 @@
 </main>
 
 <footer>
-  Depth data: <a href="https://registry.opendata.aws/terrain-tiles/">AWS Terrain Tiles</a> (Mapzen/Tilezen) incorporating
-  <a href="https://www.ncei.noaa.gov/products/great-lakes-bathymetry">NOAA NCEI Great Lakes Bathymetry</a>, USGS 3DEP/SRTM, ETOPO1 —
-  <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md">full attribution</a>. Map © OpenStreetMap contributors.
+  Depth data: <a href="https://www.ncei.noaa.gov/products/great-lakes-bathymetry">NOAA NCEI Great Lakes Bathymetry</a>
+  via the NCEI <a href="https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_global_mosaic/ImageServer">DEM Global Mosaic</a>. Map © OpenStreetMap contributors.
   Not for navigation.
 </footer>
 

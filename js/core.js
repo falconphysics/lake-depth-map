@@ -17,8 +17,8 @@
   const M_PER_FT = 0.3048;
 
   // ---------------------------------------------------------------------------
-  // Great Lakes presets. Surface = IGLD85 low-water datum (the same offset the
-  // terrain-tile builder used when it merged NOAA's Great Lakes bathymetry).
+  // Great Lakes presets. Surface = IGLD85 low-water datum. NOAA's mosaic stores the
+  // lakes as depth below that datum; the loader tries both and checks knownMaxDepth.
   // ---------------------------------------------------------------------------
   const PRESETS = {
     superior: {
@@ -228,7 +228,7 @@
       const maxD = max / unit, raw = maxD / n;
       const p = Math.pow(10, Math.floor(Math.log10(raw)));
       let best = raw, bestErr = Infinity;
-      for (const mult of [0.1, 1, 10]) for (const c of [1, 2, 2.5, 5]) {
+      for (const mult of [0.1, 1, 10]) for (const c of [1, 1.5, 2, 2.5, 3, 4, 5, 7.5]) {
         const s = c * p * mult;
         if ((n - 1) * s >= maxD) continue;
         const err = Math.abs(Math.log(s / raw));

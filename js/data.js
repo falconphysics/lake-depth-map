@@ -1,6 +1,7 @@
 /*
  * Lake Depth Map — data loaders
- *  - AWS Terrain Tiles (Terrarium PNG) for any bounding box
+ *  - NOAA NCEI DEM Global Mosaic (float GeoTIFF) for any bounding box
+ *  - AWS Terrain Tiles (Terrarium PNG) — kept for reference; they fill lakes with 0, so no lake floors
  *  - GeoTIFF (via geotiff.js), Esri ASCII grid (.asc), and grayscale images
  * Every loader resolves to { depth: Float32Array (m, NaN = no data), w, h, aspect, ... }
  */
@@ -86,6 +87,53 @@
     return {
       elev, w, h, z,
       toPixel: (lon, lat) => [lonToX(lon, z) - x0, latToY(lat, z) - y0]
+    };
+  }
+
+  // ---------------------------------------------------------------- NOAA
+  // NOAA NCEI "DEM Global Mosaic" image service: float32 elevations that include the
+  // Great Lakes bathymetry (stored as depth below each lake's chart datum, i.e. negative).
+  const NOAA_URL = 'https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_global_mosaic/ImageServer/exportImage';
+
+  /**
+   * Fetch a float elevation grid for bbox [minLon,minLat,maxLon,maxLat] with square
+   * (metre-wise) pixels. Returns the same shape as fetchElevation.
+   */
+  async function fetchNOAA(bbox, targetPx, onProgress, signal) {
+    const [x0, y0, x1, y1] = bbox;
+    const latC = (y0 + y1) / 2, k = Math.cos(latC * Math.PI / 180);
+    const ratio = (y1 - y0) / ((x1 - x0) * k);           // height / width in metres
+    let w = ratio <= 1 ? targetPx : Math.round(targetPx / ratio);
+    let h = Math.round(w * ratio);
+    w = Math.max(16, Math.min(4000, w)); h = Math.max(16, Math.min(4000, h));
+    const params = new URLSearchParams({
+      bbox: [x0, y0, x1, y1].join(','), bboxSR: '4326', imageSR: '4326', size: w + ',' + h,
+      format: 'tiff', pixelType: 'F32', noData: '-99999', interpolation: 'RSP_BilinearInterpolation', f: 'image'
+    });
+    onProgress && onProgress(0, 1);
+    const res = await fetch(NOAA_URL + '?' + params, { mode: 'cors', signal });
+    if (!res.ok) throw new Error('NOAA server answered ' + res.status);
+    const buf = await res.arrayBuffer();
+    const head = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
+    const isTiff = (head[0] === 0x49 && head[1] === 0x49) || (head[0] === 0x4d && head[1] === 0x4d);
+    if (!isTiff) {
+      let msg = '';
+      try { msg = JSON.parse(new TextDecoder().decode(buf)).error.message; } catch (e) { /* not JSON */ }
+      throw new Error('NOAA server did not return elevation data' + (msg ? ': ' + msg : ''));
+    }
+    const tiff = await GeoTIFF.fromArrayBuffer(buf);
+    const img = await tiff.getImage();
+    const W = img.getWidth(), H = img.getHeight();
+    const ras = await img.readRasters({ samples: [0], interleave: true });
+    const elev = new Float32Array(W * H);
+    for (let i = 0; i < W * H; i++) {
+      const v = ras[i];
+      elev[i] = (!Number.isFinite(v) || v < -15000 || v > 10000) ? NaN : v;
+    }
+    onProgress && onProgress(1, 1);
+    return {
+      elev, w: W, h: H,
+      toPixel: (lon, lat) => [(lon - x0) / (x1 - x0) * W, (y1 - lat) / (y1 - y0) * H]
     };
   }
 
@@ -205,5 +253,5 @@
     return { vals, w, h, rawAspect: 1, geoAspect: 1, geographic: false, nodata: null, min: 0, max: 1, isImage: true };
   }
 
-  root.LakeData = { fetchElevation, excludeMask, chooseZoom, readGeoTIFF, readASC, readImage, valuesToDepth, stats };
+  root.LakeData = { fetchNOAA, fetchElevation, excludeMask, chooseZoom, readGeoTIFF, readASC, readImage, valuesToDepth, stats };
 })(typeof self !== 'undefined' ? self : this);
