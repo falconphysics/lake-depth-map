@@ -1,0 +1,66 @@
+# Lake Depth Map Maker
+
+A static web tool that turns lake bathymetry into stacked, laser-cuttable SVG sheets. When the sheets are cut from plywood, painted and stacked, they make a layered depth map for the wall.
+
+- **All five Great Lakes are built in.** One click downloads NOAA's Great Lakes bathymetry, streamed from the public AWS Terrain Tiles.
+- **Pick on map** works for any lake the global terrain data has lake-floor depths for.
+- **Upload data** covers every other lake. It accepts a GeoTIFF, an Esri ASCII grid (`.asc`), or a grayscale image.
+- **Output:** one SVG per sheet at real size (mm). Red lines are cuts and blue lines are scores. Each sheet gets alignment pin holes, a hidden sheet number and glue guides. The top sheet gets an engraved title in a single-stroke font, so there's no font conversion to do. You can download everything as a ZIP that also has a combined sheet and assembly notes.
+
+There's no build step and no server code. Every library is vendored in `vendor/`, so the site runs entirely in the browser.
+
+## Put it on GitHub Pages
+
+1. Create a new repository, for example `lake-depth-map`.
+2. Upload everything in this folder to the root of the repo, `.nojekyll` included.
+3. In the repo, go to **Settings → Pages → Build and deployment**. Choose **Deploy from a branch**, then pick `main` and `/ (root)`.
+4. After a minute the site is live at `https://<your-username>.github.io/lake-depth-map/`.
+
+To try it locally, run `python3 -m http.server` in this folder and open <http://localhost:8000>. Opening `index.html` straight from disk won't work, because browsers block the tile downloads from `file://`.
+
+## How the layers work
+
+| Sheet | What gets cut out |
+|---|---|
+| 1 (top) | The shoreline. This sheet is the frame. |
+| 2 … N | The water deeper than that sheet's depth |
+| Backing | Nothing. It's a solid sheet with pin holes. |
+
+Islands and shoals fall out as loose pieces. Glue each one onto the next sheet down, where a blue score line marks its spot.
+
+**Depth steps** controls how the depths are split:
+- **Even** uses equal depth intervals.
+- **More shallow detail** suits lakes with big shallow shelves, like Erie or Green Bay.
+- **Equal area** gives every sheet about the same amount of visible water.
+
+You can also type your own depths into **Custom depths**.
+
+## Data for other lakes
+
+The map option uses the [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/), which include real lake-floor depths for the Great Lakes. Most smaller lakes come back flat, as just the water surface, and the tool will tell you when that happens. For those lakes, upload a depth raster instead:
+
+- **NOAA NCEI** has bathymetric DEMs for many U.S. lakes and coasts: <https://www.ncei.noaa.gov/maps/bathymetry/>
+- **State DNRs** publish lake-depth data. Minnesota DNR, for example, has lake bathymetric DEMs.
+- **USGS** has topobathymetric DEMs.
+- **No raster?** Trace a printed depth chart in any image editor. Fill each depth band with a flat gray (darker = deeper, white = land), upload the image, and enter the deepest depth.
+
+For GeoTIFF or ASCII grids, tell the tool what the values mean: depth (positive or negative), or elevation plus the lake's surface elevation. Check **lat/long** if the grid is in degrees so the lake isn't stretched east–west.
+
+## Files
+
+```
+index.html        page layout
+css/style.css     styles
+js/core.js        geometry engine: lake isolation, smoothing, contours, SVG + engraving font
+js/data.js        terrain-tile fetcher and GeoTIFF / ASCII / image readers
+js/app.js         UI, preview, downloads
+vendor/           d3-contour, d3-array, geotiff.js, JSZip, Leaflet
+```
+
+## Credits
+
+- Depth data: AWS Terrain Tiles (Mapzen / Tilezen), which incorporate NOAA NCEI Great Lakes Bathymetry, USGS 3DEP/SRTM and ETOPO1. See the [attribution](https://github.com/tilezen/joerd/blob/master/docs/attribution.md).
+- Map tiles: © OpenStreetMap contributors.
+- Libraries: d3-contour and d3-array (ISC), geotiff.js (MIT), JSZip (MIT/GPLv3), Leaflet (BSD-2).
+
+These depth maps are decorative and not for navigation.

@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lake Depth Map Maker — layered laser-cut bathymetry</title>
+<meta name="description" content="Generate stacked, laser-cuttable SVG layers of lake depth maps — all five Great Lakes or any lake with depth data.">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="masthead">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 48 48" aria-hidden="true"><rect x="2" y="2" width="44" height="44" rx="4" fill="#d8b98f"/><path d="M8 24c3-9 10-14 18-13s14 6 14 13-6 13-15 13S5 33 8 24z" fill="#7fb6d1"/><path d="M14 24c2-5 7-8 12-7s8 4 8 7-4 8-9 8-13-3-11-8z" fill="#2f6f97"/><path d="M20 24c1-2 4-3 6-3s4 1 4 3-2 4-5 4-6-2-5-4z" fill="#0d3352"/></svg>
+    <div>
+      <h1>Lake Depth Map Maker</h1>
+      <p>Layered bathymetry for the laser cutter — stack the sheets, see the lake floor.</p>
+    </div>
+  </div>
+</header>
+
+<main class="workspace">
+  <!-- ============================== CONTROLS ============================== -->
+  <aside class="controls">
+
+    <section class="panel" id="sec-lake">
+      <h2><span class="step">1</span> Choose a lake</h2>
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="tab-great" role="tab">Great Lakes</button>
+        <button class="tab" data-tab="tab-map" role="tab">Pick on map</button>
+        <button class="tab" data-tab="tab-file" role="tab">Upload data</button>
+      </div>
+
+      <div class="tabpane active" id="tab-great">
+        <div class="lake-buttons">
+          <button class="lake-btn" data-lake="superior">Superior<small>406 m · 1,333 ft</small></button>
+          <button class="lake-btn" data-lake="michigan">Michigan<small>281 m · 923 ft</small></button>
+          <button class="lake-btn" data-lake="huron">Huron<small>229 m · 750 ft</small></button>
+          <button class="lake-btn" data-lake="erie">Erie<small>64 m · 210 ft</small></button>
+          <button class="lake-btn" data-lake="ontario">Ontario<small>244 m · 802 ft</small></button>
+          <button class="lake-btn demo" data-lake="demo">Demo lake<small>made up · no download</small></button>
+        </div>
+        <p class="hint">Depths come from NOAA's Great Lakes bathymetry, streamed as public AWS terrain tiles.</p>
+      </div>
+
+      <div class="tabpane" id="tab-map">
+        <div id="map"></div>
+        <p class="hint">Zoom so the lake fills the map, then <b>tap inside the lake</b> to drop a marker.</p>
+        <div class="row">
+          <label>Lake name <input type="text" id="mapName" placeholder="Lake Tahoe"></label>
+        </div>
+        <div class="row">
+          <label>Surface elevation
+            <span class="inline"><input type="number" id="mapSurface" step="0.1" placeholder="e.g. 1897"><select id="mapSurfaceUnit"><option value="m">m</option><option value="ft">ft</option></select></span>
+          </label>
+        </div>
+        <p class="hint">Look up the lake's surface elevation above sea level (Wikipedia lists it). Global terrain data has lake-floor depths for the Great Lakes and some very large lakes; most smaller lakes come back flat — use <b>Upload data</b> for those.</p>
+        <button class="primary" id="mapLoad">Load lake from map view</button>
+      </div>
+
+      <div class="tabpane" id="tab-file">
+        <label class="file-drop" id="fileDrop">
+          <input type="file" id="fileInput" accept=".tif,.tiff,.asc,.txt,.png,.jpg,.jpeg,.webp">
+          <span><b>Choose a file</b> or drop it here<br><small>GeoTIFF · Esri ASCII grid (.asc) · grayscale image</small></span>
+        </label>
+        <div id="fileOptions" hidden>
+          <p class="fileinfo" id="fileInfo"></p>
+          <div class="row raster-only">
+            <label>Values are
+              <select id="fileMeaning">
+                <option value="depth">Depth (positive downward)</option>
+                <option value="negdepth">Depth (negative numbers)</option>
+                <option value="elevation">Elevation (height above datum)</option>
+              </select>
+            </label>
+            <label>Units <select id="fileUnits"><option value="m">meters</option><option value="ft">feet</option></select></label>
+          </div>
+          <div class="row raster-only" id="fileSurfaceRow" hidden>
+            <label>Lake surface elevation <input type="number" id="fileSurface" step="0.1"></label>
+          </div>
+          <div class="row image-only">
+            <label><input type="checkbox" id="fileDarkDeep" checked> Darker = deeper (white/transparent = land)</label>
+          </div>
+          <div class="row image-only">
+            <label>Deepest point <span class="inline"><input type="number" id="fileImgMax" value="30" step="1"><select id="fileImgUnit"><option value="ft">ft</option><option value="m">m</option></select></span></label>
+          </div>
+          <div class="row">
+            <label>Keep <select id="fileWhich"><option value="largest">Largest body of water</option><option value="all">All water in the file</option></select></label>
+            <label>Lake name <input type="text" id="fileName" placeholder="My Lake"></label>
+          </div>
+          <div class="row raster-only">
+            <label><input type="checkbox" id="fileGeo"> Pixels are latitude/longitude (fix east–west stretch)</label>
+          </div>
+          <button class="primary" id="fileLoad">Use this data</button>
+        </div>
+        <p class="hint">Good sources: NOAA NCEI bathymetry, state DNR lake-depth rasters (e.g. Minnesota DNR), USGS topobathy. No raster? Paint filled depth bands in gray shades in any image editor and upload that.</p>
+      </div>
+      <div class="status" id="status" hidden><div class="bar"><i></i></div><span></span></div>
+    </section>
+
+    <section class="panel">
+      <h2><span class="step">2</span> Layers</h2>
+      <div class="row">
+        <label>Cut layers <output id="nLayersOut">8</output>
+          <input type="range" id="nLayers" min="2" max="20" value="8">
+        </label>
+      </div>
+      <div class="row">
+        <label>Depth steps
+          <select id="spacing">
+            <option value="linear">Even depth steps</option>
+            <option value="sqrt">More shallow detail</option>
+            <option value="area">Equal area per layer</option>
+          </select>
+        </label>
+        <label>Label units <select id="depthUnit"><option value="ft">feet</option><option value="m">meters</option></select></label>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="nice" checked> Round depths to tidy numbers</label>
+      </div>
+      <div class="row">
+        <label>Custom depths <small>(optional, comma-separated, overrides the above)</small>
+          <input type="text" id="customDepths" placeholder="e.g. 10, 25, 50, 100, 200">
+        </label>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="backing" checked> Add a solid backing sheet</label>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2><span class="step">3</span> Size &amp; material</h2>
+      <div class="row">
+        <label>Units <select id="units"><option value="in">inches</option><option value="mm">millimeters</option></select></label>
+        <label>Shape <select id="shape"><option value="rect">Rectangle</option><option value="circle">Circle</option></select></label>
+      </div>
+      <div class="row">
+        <label>Width <input type="number" id="width" value="12" step="0.25" min="1"></label>
+        <label>Height <input type="number" id="height" placeholder="auto" step="0.25" min="1"></label>
+      </div>
+      <div class="row">
+        <label>Border <input type="number" id="margin" value="1" step="0.125" min="0"></label>
+        <label>Corner radius <input type="number" id="radius" value="0.25" step="0.125" min="0"></label>
+      </div>
+      <div class="row">
+        <label>Sheet thickness <input type="number" id="thickness" value="0.125" step="0.01" min="0.01"></label>
+        <label>Alignment pin holes <input type="number" id="holeDia" value="0.125" step="0.01" min="0"></label>
+      </div>
+      <p class="hint">Pin holes go in the border corners — push dowels or brass rod through to line up the stack. Set to 0 to skip.</p>
+    </section>
+
+    <section class="panel">
+      <h2><span class="step">4</span> Detail</h2>
+      <div class="row">
+        <label>Data resolution
+          <select id="resolution"><option value="700">Fast</option><option value="1200" selected>Standard</option><option value="2000">Fine</option></select>
+        </label>
+      </div>
+      <div class="row">
+        <label>Smoothing <output id="smoothOut">3</output><input type="range" id="smooth" min="0" max="10" value="3"></label>
+      </div>
+      <div class="row">
+        <label>Drop pieces smaller than <output id="minPieceOut"></output><input type="range" id="minPiece" min="0" max="12" value="4" step="0.5"></label>
+      </div>
+      <p class="hint">Small islands and pits become tiny loose parts — raise this to remove fiddly bits. Data resolution applies when you (re)load a lake.</p>
+    </section>
+
+    <section class="panel">
+      <h2><span class="step">5</span> Engraving &amp; output</h2>
+      <div class="row">
+        <label><input type="checkbox" id="useTitle" checked> Title</label>
+        <input type="text" id="title" placeholder="(lake name)">
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="useSubtitle" checked> Subtitle</label>
+        <input type="text" id="subtitle" placeholder="(max depth)">
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="labels" checked> Number each sheet (hidden under the layer above)</label>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="guides" checked> Score glue guides for the layer above</label>
+      </div>
+      <div class="row">
+        <label>Cut color <input type="color" id="cutColor" value="#ff0000"></label>
+        <label>Score color <input type="color" id="scoreColor" value="#0000ff"></label>
+        <label>Line width (mm) <input type="number" id="strokeWidth" value="0.1" step="0.01" min="0.001"></label>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ============================== PREVIEW ============================== -->
+  <section class="stage">
+    <div class="stage-head">
+      <div class="tabs small">
+        <button class="vtab active" data-view="stack">Stacked preview</button>
+        <button class="vtab" data-view="depth">Depth data</button>
+        <button class="vtab" data-view="sheets">Sheets</button>
+      </div>
+      <label class="palette">Preview colors
+        <select id="palette">
+          <option value="water">Wood frame + water</option>
+          <option value="wood">All wood</option>
+          <option value="chart">Nautical chart</option>
+          <option value="mono">White / gray</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="canvas-wrap" id="canvasWrap">
+      <canvas id="preview"></canvas>
+      <div class="sheets" id="sheets" hidden></div>
+      <div class="empty" id="empty">
+        <p>Pick a Great Lake to start.</p>
+      </div>
+    </div>
+
+    <div class="summary" id="summary"></div>
+
+    <div class="downloads">
+      <button class="primary big" id="dlZip" disabled>Download all sheets (.zip)</button>
+      <button id="dlCombined" disabled>One SVG with every sheet</button>
+    </div>
+
+    <div class="legend" id="legend"></div>
+
+    <details class="howto">
+      <summary>Cutting &amp; assembly tips</summary>
+      <ol>
+        <li><b>Red lines cut, blue lines score.</b> Each SVG is drawn at real size in millimeters — import at 100% scale.</li>
+        <li><b>Sheet 1 is the top</b> (the shoreline and frame). Each next sheet opens up the deeper water. The backing sheet closes the bottom.</li>
+        <li><b>Loose pieces are islands and shoals.</b> When a sheet's cut frees an island, glue it onto the next sheet down — the blue score guide shows where it goes.</li>
+        <li><b>Paint or stain before gluing.</b> The legend colors make a good shallow-to-deep gradient. Seal plywood edges if you paint them.</li>
+        <li><b>Line up with pins.</b> Run dowels or rod through the corner holes while gluing, then trim them flush.</li>
+        <li>Most 1/8" (3 mm) plywood works; 8–12 layers look great at 12" wide.</li>
+      </ol>
+    </details>
+  </section>
+</main>
+
+<footer>
+  Depth data: <a href="https://registry.opendata.aws/terrain-tiles/">AWS Terrain Tiles</a> (Mapzen/Tilezen) incorporating
+  <a href="https://www.ncei.noaa.gov/products/great-lakes-bathymetry">NOAA NCEI Great Lakes Bathymetry</a>, USGS 3DEP/SRTM, ETOPO1 —
+  <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md">full attribution</a>. Map © OpenStreetMap contributors.
+  Not for navigation.
+</footer>
+
+<script src="vendor/d3-array.min.js"></script>
+<script src="vendor/d3-contour.min.js"></script>
+<script src="vendor/jszip.min.js"></script>
+<script src="vendor/geotiff.js"></script>
+<script src="vendor/leaflet/leaflet.js"></script>
+<script src="js/core.js"></script>
+<script src="js/data.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
